@@ -6,7 +6,6 @@ import {
   ChevronDown,
   Menu,
   Sparkles,
-  ExternalLink,
   ShieldCheck,
   CheckCircle2,
   AlertTriangle,
@@ -24,7 +23,6 @@ interface MerchantTopbarProps {
   selectedLocation: StoreLocation;
   onSelectLocation: (loc: StoreLocation) => void;
   onOpenMobileSidebar: () => void;
-  onExitToStorefront: () => void;
   onSignOut: () => void;
   lowStockCount: number;
   outOfStockCount: number;
@@ -39,7 +37,6 @@ export const MerchantTopbar: React.FC<MerchantTopbarProps> = ({
   selectedLocation,
   onSelectLocation,
   onOpenMobileSidebar,
-  onExitToStorefront,
   onSignOut,
   lowStockCount,
   outOfStockCount,
@@ -84,15 +81,7 @@ export const MerchantTopbar: React.FC<MerchantTopbarProps> = ({
     },
     suppliers: {
       title: 'Suppliers',
-      subtitle: 'Supplier contacts and WhatsApp numbers',
-    },
-    restock: {
-      title: 'Restock Requests',
-      subtitle: 'Low-stock and out-of-stock replenishment desk',
-    },
-    notifications: {
-      title: 'Notifications',
-      subtitle: 'WhatsApp supplier notification history and retries',
+      subtitle: 'Directory & WhatsApp notification logs for stockout alerts',
     },
     settings: {
       title: 'Merchant Settings',
@@ -241,16 +230,6 @@ export const MerchantTopbar: React.FC<MerchantTopbarProps> = ({
           )}
         </div>
 
-        {/* Quick Portal Switcher: View Customer Storefront */}
-        <button
-          type="button"
-          onClick={onExitToStorefront}
-          className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#DCEFE3] hover:bg-[#C8E8D9] text-[#064E36] font-display text-xs font-bold transition-all cursor-pointer shadow-2xs border border-[#064E36]/10"
-        >
-          <ExternalLink className="w-3.5 h-3.5" />
-          <span>Customer View</span>
-        </button>
-
         {/* Merchant Avatar & Dropdown */}
         <div className="relative">
           <button
@@ -279,14 +258,6 @@ export const MerchantTopbar: React.FC<MerchantTopbarProps> = ({
                   Verified Store Admin
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={onExitToStorefront}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-[#202A24] hover:bg-[#EAF4EC] hover:text-[#064E36] transition-colors cursor-pointer"
-              >
-                <ExternalLink className="w-3.5 h-3.5 text-[#7C877F]" />
-                <span>Visit Customer Storefront</span>
-              </button>
               <button
                 type="button"
                 onClick={onSignOut}

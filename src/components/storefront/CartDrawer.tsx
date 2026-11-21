@@ -5,7 +5,6 @@ import {
   Minus,
   Plus,
   Trash2,
-  Sparkles,
   ShieldCheck,
   AlertTriangle,
   ShoppingBag,
@@ -15,6 +14,7 @@ import {
 import { CityName, MultiCityProduct } from '../../lib/storefrontCatalog';
 import { CartItemLine } from './CheckoutAndRescueView';
 import { getStockBadgeMeta } from './ProductDetailView';
+import { ProductImage } from './ProductImage';
 
 export type CartLine = CartItemLine;
 
@@ -27,7 +27,7 @@ interface CartDrawerProps {
   onUpdateQty: (productId: string, quantity: number) => void;
   onRemove: (productId: string) => void;
   onClear: () => void;
-  onProceedToCheckout: (simulateConflict?: boolean) => void;
+  onProceedToCheckout: () => void;
 }
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
@@ -118,7 +118,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       Your {city} basket is empty
                     </p>
                     <p className="text-xs text-[#7C877F] mt-1 leading-relaxed">
-                      Explore deals in {city} and add items to test instant checkout or Smart Basket Rescue.
+                      Explore deals in {city} and add items to your basket.
                     </p>
                   </div>
                   <button
@@ -133,14 +133,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               ) : (
                 <>
                   {hasCityConflict && (
-                    <div className="rounded-2xl bg-[#F5EBCB] border border-[#E8C86B] p-3.5 flex items-start gap-2.5">
-                      <AlertTriangle className="w-4 h-4 text-[#7A5800] shrink-0 mt-0.5" />
-                      <div className="text-xs text-[#7A5800]">
+                    <div className="rounded-2xl bg-red-50 border border-red-200 p-3.5 flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-red-700 shrink-0 mt-0.5" />
+                      <div className="text-xs text-red-800">
                         <p className="font-extrabold">
-                          Stock Conflict in {city} Hub
+                          Low stock in {city} Hub
                         </p>
                         <p className="text-[11px] mt-0.5 leading-relaxed">
-                          One or more items exceed available stock in {city}. Proceed to checkout to trigger <strong>Smart Basket Rescue</strong> (±20% alternatives).
+                          One or more items exceed available stock in {city}. Update quantities or choose replacements at checkout.
                         </p>
                       </div>
                     </div>
@@ -160,14 +160,15 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                         key={line.product.id}
                         className={`rounded-2xl bg-white border p-4 transition-all ${
                           isConflict
-                            ? 'border-[#E8C86B] bg-[#F5EBCB]/25'
+                            ? 'border-red-200 bg-red-50/40'
                             : 'border-[#E8EBE7]'
                         }`}
                       >
                         <div className="flex gap-3.5">
-                          <img
+                          <ProductImage
                             src={line.product.image}
                             alt={line.product.name}
+                            category={line.product.category}
                             className="w-16 h-16 rounded-xl object-contain bg-[#FAF9F5] border border-[#E8EBE7] p-1.5 shrink-0"
                           />
                           <div className="flex-1 min-w-0">
@@ -273,25 +274,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <button
-                    type="button"
-                    onClick={() => onProceedToCheckout(false)}
-                    className="w-full py-3.5 px-5 rounded-full bg-[#0A2540] hover:bg-[#101413] text-white text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm"
-                  >
-                    <ShieldCheck className="w-4 h-4 text-[#65B99B]" />
-                    Proceed to Checkout
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => onProceedToCheckout(true)}
-                    className="w-full py-2.5 px-4 rounded-full bg-[#F5EBCB] hover:bg-[#E8D58A] text-[#0A2540] border border-[#E8C86B] text-[11px] font-extrabold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
-                  >
-                    <Sparkles className="w-3.5 h-3.5 text-[#7A5800]" />
-                    Demo: Checkout & Simulate Stock Conflict (Rescue)
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => onProceedToCheckout()}
+                  className="w-full py-3.5 px-5 rounded-full bg-[#0A2540] hover:bg-[#101413] text-white text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm"
+                >
+                  <ShieldCheck className="w-4 h-4 text-[#65B99B]" />
+                  Proceed to Checkout
+                </button>
               </div>
             )}
           </motion.aside>

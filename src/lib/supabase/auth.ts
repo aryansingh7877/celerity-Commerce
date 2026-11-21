@@ -32,6 +32,26 @@ export async function signUpUser(
   };
 }
 
+function friendlyAuthError(error: AuthError | null): AuthError | null {
+  if (!error) return null;
+  const status = (error as AuthError & { status?: number }).status;
+  const raw = (error.message || '').toLowerCase();
+  let message = error.message;
+  if (status === 429 || raw.includes('rate limit') || raw.includes('too many')) {
+    message =
+      'Too many attempts. Wait a few minutes before trying again (password reset is rate-limited).';
+  } else if (
+    raw.includes('invalid login credentials') ||
+    raw.includes('invalid_credentials')
+  ) {
+    message =
+      'Wrong email or password. Use the password for this Celerity account, or wait and try Forgot password after the rate limit cools down.';
+  } else if (raw.includes('email not confirmed')) {
+    message = 'Confirm your email from the signup link before signing in.';
+  }
+  return { ...error, message };
+}
+
 /**
  * Sign in existing user with email and password
  */
@@ -40,14 +60,14 @@ export async function signInUser(
   password: string
 ): Promise<AuthResponse> {
   const { data, error } = await supabase.auth.signInWithPassword({
-    email,
+    email: email.trim().toLowerCase(),
     password,
   });
 
   return {
     user: data.user,
     session: data.session,
-    error,
+    error: friendlyAuthError(error),
   };
 }
 
@@ -65,10 +85,10 @@ export async function signOutUser(): Promise<{ error: AuthError | null }> {
 export async function sendPasswordReset(
   email: string
 ): Promise<{ error: AuthError | null }> {
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+  const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
     redirectTo: typeof window !== 'undefined' ? `${window.location.origin}/#reset-password` : undefined,
   });
-  return { error };
+  return { error: friendlyAuthError(error) };
 }
 
 /**

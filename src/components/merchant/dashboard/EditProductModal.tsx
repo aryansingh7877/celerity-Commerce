@@ -21,7 +21,9 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
   const [sku, setSku] = useState('');
   const [price, setPrice] = useState<number | ''>(0);
   const [stock, setStock] = useState<number | ''>(0);
-  const [location, setLocation] = useState<'Bangalore' | 'Mumbai' | 'Delhi'>('Bangalore');
+  const [location, setLocation] = useState<'Bangalore' | 'Bengaluru' | 'Mumbai' | 'Delhi'>(
+    'Bangalore'
+  );
   const [image, setImage] = useState('');
   const [description, setDescription] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);

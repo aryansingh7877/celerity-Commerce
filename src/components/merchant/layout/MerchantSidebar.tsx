@@ -10,12 +10,9 @@ import {
   HelpCircle,
   LogOut,
   ShoppingBag,
-  ExternalLink,
-  ChevronRight,
   ShieldCheck,
   ClipboardList,
   Truck,
-  Bell,
   Archive,
 } from 'lucide-react';
 import { MerchantTab } from '../../../types/product';
@@ -23,7 +20,6 @@ import { MerchantTab } from '../../../types/product';
 interface MerchantSidebarProps {
   currentTab: MerchantTab;
   onSelectTab: (tab: MerchantTab) => void;
-  onExitToStorefront: () => void;
   onSignOut: () => void;
   merchantName?: string;
   merchantEmail?: string;
@@ -35,7 +31,6 @@ interface MerchantSidebarProps {
 export const MerchantSidebar: React.FC<MerchantSidebarProps> = ({
   currentTab,
   onSelectTab,
-  onExitToStorefront,
   onSignOut,
   merchantName = 'Aryan Singh',
   merchantEmail = 'aryansingh787769@gmail.com',
@@ -97,18 +92,6 @@ export const MerchantSidebar: React.FC<MerchantSidebarProps> = ({
       id: 'suppliers' as MerchantTab,
       label: 'Suppliers',
       icon: Truck,
-      badge: null,
-    },
-    {
-      id: 'restock' as MerchantTab,
-      label: 'Restock',
-      icon: Package,
-      badge: null,
-    },
-    {
-      id: 'notifications' as MerchantTab,
-      label: 'Notifications',
-      icon: Bell,
       badge: null,
     },
     {
@@ -211,23 +194,6 @@ export const MerchantSidebar: React.FC<MerchantSidebarProps> = ({
             })}
           </nav>
 
-          {/* Quick Storefront Link */}
-          <div className="pt-5 mt-5 border-t border-[#E8EBE7]">
-            <div className="px-3 mb-2 text-[11px] font-extrabold uppercase tracking-widest text-[#7C877F]">
-              Live Storefront
-            </div>
-            <button
-              type="button"
-              onClick={onExitToStorefront}
-              className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-display text-sm font-semibold text-[#202A24]/75 hover:bg-white hover:text-[#064E36] transition-all cursor-pointer border border-transparent hover:border-[#E8EBE7] shadow-2xs group"
-            >
-              <div className="flex items-center gap-3">
-                <ExternalLink className="w-4 h-4 text-[#7C877F] group-hover:text-[#064E36]" />
-                <span>Customer View</span>
-              </div>
-              <ChevronRight className="w-3.5 h-3.5 text-[#7C877F] group-hover:translate-x-0.5 transition-transform" />
-            </button>
-          </div>
         </div>
 
         {/* Bottom: Profile & Logout */}

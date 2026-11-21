@@ -12,7 +12,6 @@ import {
   Minus,
   Plus,
   ShoppingBag,
-  Sparkles,
   Info,
 } from 'lucide-react';
 import {
@@ -20,6 +19,7 @@ import {
   CITIES,
   MultiCityProduct,
 } from '../../lib/storefrontCatalog';
+import { ProductImage } from './ProductImage';
 
 interface ProductDetailViewProps {
   product: MultiCityProduct;
@@ -124,9 +124,11 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           {/* Left: Product Visual Gallery */}
           <div className="lg:col-span-5 flex flex-col justify-between space-y-4">
             <div className="relative aspect-square rounded-[24px] bg-[#FAF9F5] border border-[#E8EBE7] overflow-hidden flex items-center justify-center p-6">
-              <img
+              <ProductImage
                 src={product.image}
                 alt={product.name}
+                category={product.category}
+                loading="eager"
                 className="w-full h-full object-contain rounded-2xl transition-transform duration-500 hover:scale-105"
               />
 
@@ -172,9 +174,9 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 <p className="text-[10px] text-[#7C877F] mt-0.5">No overselling</p>
               </div>
               <div className="rounded-2xl bg-[#FAF9F5] border border-[#E8EBE7] p-3 text-center">
-                <Sparkles className="w-4 h-4 text-[#064E36] mx-auto mb-1" />
-                <p className="text-[11px] font-extrabold text-[#0A2540]">Basket Rescue</p>
-                <p className="text-[10px] text-[#7C877F] mt-0.5">±20% auto-swap</p>
+                <MapPin className="w-4 h-4 text-[#064E36] mx-auto mb-1" />
+                <p className="text-[11px] font-extrabold text-[#0A2540]">{city} Hub</p>
+                <p className="text-[10px] text-[#7C877F] mt-0.5">Live stock</p>
               </div>
             </div>
           </div>
@@ -417,38 +419,37 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           </div>
         </div>
 
-        <div className="lg:col-span-5 rounded-[24px] bg-[#EAF4EC]/70 border border-[#C8E8D9] p-6 sm:p-8 flex flex-col justify-between space-y-4">
+        <div className="lg:col-span-5 rounded-[24px] bg-[#FAF9F5] border border-[#E8EBE7] p-6 sm:p-8 flex flex-col justify-between space-y-4">
           <div className="space-y-3">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#064E36] text-white text-[10px] font-extrabold uppercase tracking-wider">
-              <Sparkles className="w-3.5 h-3.5" />
-              Smart Basket Rescue Guarantee
+              <Truck className="w-3.5 h-3.5" />
+              {city} Hub Delivery
             </span>
             <h3 className="font-display font-black text-xl text-[#0A2540]">
-              Protected Against Mid-Checkout Sellouts
+              Fulfilled from {currentHubMeta.hubName}
             </h3>
             <p className="text-xs text-[#202A24]/80 leading-relaxed">
-              Even if the last unit in <strong>{city}</strong> sells out while you are reviewing your order, Celerity never drops your entire cart. Our Smart Basket Rescue engine keeps your other items locked and offers up to 4 in-stock alternatives in the same category within ±20% price.
+              Orders from the {city} catalog ship with {currentHubMeta.sla} delivery. Stock shown is live for this hub only.
             </p>
           </div>
 
-          <div className="rounded-2xl bg-white/90 border border-[#C8E8D9] p-4 space-y-2 text-xs">
+          <div className="rounded-2xl bg-white border border-[#E8EBE7] p-4 space-y-2 text-xs">
             <p className="font-extrabold text-[#0A2540] flex items-center gap-1.5">
               <Info className="w-4 h-4 text-[#064E36]" />
-              Matching Rules for {product.name}:
+              Product details
             </p>
             <ul className="text-[11px] text-[#7C877F] space-y-1 pl-4 list-disc">
               <li>
-                Category match: <strong className="text-[#0A2540]">{product.category}</strong>
+                Category: <strong className="text-[#0A2540]">{product.category}</strong>
               </li>
               <li>
-                Price window (±20%):{' '}
+                SKU: <strong className="text-[#0A2540]">{product.sku}</strong>
+              </li>
+              <li>
+                Available in {city}:{' '}
                 <strong className="text-[#0A2540]">
-                  ₹{Math.round(product.price * 0.8).toLocaleString('en-IN')} – ₹
-                  {Math.round(product.price * 1.2).toLocaleString('en-IN')}
+                  {product.cityStock[city] ?? 0} units
                 </strong>
-              </li>
-              <li>
-                Live hub stock in <strong className="text-[#0A2540]">{city} &gt; 0</strong>
               </li>
             </ul>
           </div>
@@ -482,9 +483,10 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 >
                   <div>
                     <div className="relative aspect-4/3 rounded-2xl bg-[#FAF9F5] overflow-hidden mb-3 p-3 flex items-center justify-center">
-                      <img
+                      <ProductImage
                         src={sim.image}
                         alt={sim.name}
+                        category={sim.category}
                         className="w-full h-full object-contain"
                       />
                       <span

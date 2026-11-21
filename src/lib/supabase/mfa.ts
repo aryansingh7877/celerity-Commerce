@@ -2,6 +2,7 @@ import { api, ApiError } from '../api';
 import { supabase } from './client';
 
 const PASS_KEY = 'celerity_2fa_passed';
+const INTENT_KEY = 'celerity_login_intent';
 
 export type TwoStepMethod = 'totp' | 'email';
 
@@ -11,6 +12,21 @@ export type TwoStepAvailability = {
   any: boolean;
 };
 
+/** Portal the user picked on the shared login page (Customer / Merchant). */
+function currentPortal(): 'customer' | 'merchant' {
+  try {
+    const v = sessionStorage.getItem(INTENT_KEY);
+    if (v === 'merchant' || v === 'customer') return v;
+  } catch {
+    /* ignore */
+  }
+  return 'customer';
+}
+
+function passToken(userId: string, portal = currentPortal()) {
+  return `${userId}:${portal}`;
+}
+
 export function clearTwoStepPass() {
   try {
     sessionStorage.removeItem(PASS_KEY);
@@ -19,17 +35,19 @@ export function clearTwoStepPass() {
   }
 }
 
+/** Marks 2FA complete for this user + current portal only. */
 export function markTwoStepPassed(userId: string) {
   try {
-    sessionStorage.setItem(PASS_KEY, userId);
+    sessionStorage.setItem(PASS_KEY, passToken(userId));
   } catch {
     /* ignore */
   }
 }
 
+/** True only if 2FA was completed for this user on the current portal. */
 export function hasTwoStepPassed(userId: string): boolean {
   try {
-    return sessionStorage.getItem(PASS_KEY) === userId;
+    return sessionStorage.getItem(PASS_KEY) === passToken(userId);
   } catch {
     return false;
   }

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase, DatabaseProfile } from '../lib/supabase/client';
 import {
@@ -8,15 +8,13 @@ import {
   sendPasswordReset,
   getProfile,
 } from '../lib/supabase/auth';
-import {
-  clearTwoStepPass,
-  needsTwoStepChallenge,
-  markTwoStepPassed,
-  isEmailAuthCallbackUrl,
-} from '../lib/supabase/mfa';
+import { isEmailAuthCallbackUrl } from '../lib/supabase/mfa';
 import { api } from '../lib/api';
 
 const FALLBACK_KEY = 'celerity_fallback_user';
+
+/** MFA disabled for now — password login goes straight to Customer/Merchant portal. */
+type SessionMode = 'boot' | 'event' | 'interactive';
 
 interface AuthModalState {
   isOpen: boolean;
@@ -27,6 +25,8 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   profile: DatabaseProfile | null;
+  profileError: string | null;
+  profileLoading: boolean;
   isLoading: boolean;
   authModalState: AuthModalState;
   isDashboardOpen: boolean;
@@ -34,13 +34,11 @@ interface AuthContextType {
   closeAuthModal: () => void;
   openDashboard: () => void;
   closeDashboard: () => void;
-  signIn: (email: string, pass: string) => Promise<{ success: boolean; error?: string; needsMfa?: boolean }>;
+  signIn: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   signUp: (email: string, pass: string, name: string) => Promise<{ success: boolean; error?: string }>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   refreshProfile: () => Promise<void>;
-  mfaPending: boolean;
-  completeMfa: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -53,116 +51,223 @@ function clearLegacyFallback() {
   }
 }
 
+/** Drop corrupted Supabase tokens (common after password reset → refresh 400s). */
+async function clearStaleLocalSession() {
+  try {
+    await supabase.auth.signOut({ scope: 'local' });
+  } catch {
+    /* ignore */
+  }
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (key.startsWith('sb-') && key.includes('auth')) doomed.push(key);
+      if (key.startsWith('celerity_2fa')) doomed.push(key);
+    }
+    for (const key of doomed) localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+  try {
+    sessionStorage.removeItem('celerity_2fa_passed');
+  } catch {
+    /* ignore */
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const t = window.setTimeout(() => resolve(fallback), ms);
+    promise
+      .then((v) => {
+        window.clearTimeout(t);
+        resolve(v);
+      })
+      .catch(() => {
+        window.clearTimeout(t);
+        resolve(fallback);
+      });
+  });
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<DatabaseProfile | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isDashboardOpen, setIsDashboardOpen] = useState<boolean>(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isDashboardOpen, setIsDashboardOpen] = useState(false);
   const [authModalState, setAuthModalState] = useState<AuthModalState>({
     isOpen: false,
     view: 'login',
   });
-  const [mfaPending, setMfaPending] = useState(false);
+  /** When true, SIGNED_IN from onAuthStateChange must not run applySession (avoids lock + hang). */
+  const interactiveAuthRef = useRef(false);
 
-  const loadProfile = async (currentUser: User) => {
-    const prof = await getProfile(currentUser.id);
-    const base: DatabaseProfile = prof ?? {
-      id: currentUser.id,
-      full_name: currentUser.user_metadata?.full_name || currentUser.email?.split('@')[0] || 'Customer',
-      email: currentUser.email || null,
-      role: 'customer',
-      created_at: currentUser.created_at,
-      updated_at: currentUser.created_at,
-    };
+  const clearAuthState = () => {
+    setSession(null);
+    setUser(null);
+    setProfile(null);
+    setProfileError(null);
+    setProfileLoading(false);
+  };
 
+  const loadProfile = async (currentUser: User): Promise<boolean> => {
+    setProfileLoading(true);
+    setProfileError(null);
     try {
-      const me = await api<{
-        user: {
-          id: string;
-          email: string | null;
-          fullName: string | null;
-          role: 'customer' | 'admin';
-          preferredCity: string | null;
-        };
-      }>('/api/auth/me');
-      setProfile({
-        ...base,
-        full_name: me.user.fullName ?? base.full_name,
-        email: me.user.email ?? base.email,
-        role: me.user.role,
-        preferred_city: me.user.preferredCity,
-      });
-    } catch {
-      setProfile({ ...base, role: base.role ?? 'customer' });
+      const prof = await withTimeout(getProfile(currentUser.id), 8_000, null);
+      const base: DatabaseProfile = prof ?? {
+        id: currentUser.id,
+        full_name:
+          currentUser.user_metadata?.full_name ||
+          currentUser.email?.split('@')[0] ||
+          'Customer',
+        email: currentUser.email || null,
+        role: undefined,
+        created_at: currentUser.created_at,
+        updated_at: currentUser.created_at,
+      };
+
+      try {
+        const me = await Promise.race([
+          api<{
+            user: {
+              id: string;
+              email: string | null;
+              fullName: string | null;
+              role: 'customer' | 'admin';
+              preferredCity: string | null;
+            };
+          }>('/api/auth/me'),
+          new Promise<never>((_, reject) => {
+            window.setTimeout(
+              () => reject(new Error('Profile API timed out. Is the API running on :4000?')),
+              12_000
+            );
+          }),
+        ]);
+
+        setProfile({
+          ...base,
+          full_name: me.user.fullName ?? base.full_name,
+          email: me.user.email ?? base.email,
+          role: me.user.role,
+          preferred_city: me.user.preferredCity,
+        });
+        setProfileError(null);
+        return true;
+      } catch (err) {
+        if (base.role === 'customer' || base.role === 'admin') {
+          setProfile({ ...base, role: base.role });
+          setProfileError(null);
+          return true;
+        }
+        setProfile(null);
+        setProfileError(
+          err instanceof Error ? err.message : 'Failed to load profile. Check API and try again.'
+        );
+        return false;
+      }
+    } catch (err) {
+      setProfile(null);
+      setProfileError(err instanceof Error ? err.message : 'Failed to load profile.');
+      return false;
+    } finally {
+      setProfileLoading(false);
     }
   };
 
-  const applySession = async (currentSession: Session | null) => {
+  const applySessionInner = async (currentSession: Session | null, _mode: SessionMode) => {
     if (!currentSession?.access_token || !currentSession.user) {
-      setSession(null);
-      setUser(null);
-      setProfile(null);
-      setMfaPending(false);
+      clearAuthState();
       return;
     }
-    // Magic-link / email callback: treat as second factor already satisfied
+
     if (isEmailAuthCallbackUrl()) {
-      markTwoStepPassed(currentSession.user.id);
       try {
         window.history.replaceState({}, '', window.location.pathname + window.location.search);
       } catch {
         /* ignore */
       }
     }
-    // Set auth state immediately so the UI can leave the login screen
+
     setSession(currentSession);
     setUser(currentSession.user);
+    await loadProfile(currentSession.user);
+  };
+
+  const applySession = async (currentSession: Session | null, mode: SessionMode) => {
     try {
-      const status = await needsTwoStepChallenge(currentSession.user.id);
-      setMfaPending(status.needs);
-    } catch {
-      setMfaPending(false);
-    }
-    // Profile fetch is best-effort (must not block / deadlock auth lock)
-    try {
-      await loadProfile(currentSession.user);
-    } catch {
-      /* keep base session even if /api/auth/me fails */
+      await applySessionInner(currentSession, mode);
+    } catch (err) {
+      console.error('[auth] applySession failed:', err);
     }
   };
 
   useEffect(() => {
     clearLegacyFallback();
-    // Capture before supabase clears the hash from a magic-link / email callback
-    const emailLinkAtBoot = isEmailAuthCallbackUrl();
+    let cancelled = false;
 
-    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
-      if (emailLinkAtBoot && currentSession?.user?.id) {
-        markTwoStepPassed(currentSession.user.id);
+    void (async () => {
+      try {
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        if (cancelled) return;
+
+        // Validate persisted token — stale refresh tokens spam 400s after password resets
+        if (currentSession?.access_token) {
+          const { error: userErr } = await supabase.auth.getUser();
+          if (userErr) {
+            await clearStaleLocalSession();
+            if (!cancelled) {
+              clearAuthState();
+              setIsLoading(false);
+            }
+            return;
+          }
+        }
+
+        await applySession(currentSession, 'boot');
+      } catch {
+        await clearStaleLocalSession();
+        if (!cancelled) clearAuthState();
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
-      void applySession(currentSession).finally(() => setIsLoading(false));
-    });
+    })();
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, currentSession) => {
-      // Defer: awaiting getSession/API inside this callback deadlocks supabase-js
+      if (event === 'INITIAL_SESSION') return;
+
+      // Leave the auth callback before any further supabase.auth / DB work
       setTimeout(() => {
-        if (
-          emailLinkAtBoot &&
-          (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') &&
-          currentSession?.user?.id
-        ) {
-          markTwoStepPassed(currentSession.user.id);
+        if (cancelled) return;
+
+        // Interactive signIn/signUp owns the session apply — skip to avoid deadlock hang
+        if (event === 'SIGNED_IN' && interactiveAuthRef.current) {
+          return;
         }
-        void applySession(currentSession).finally(() => setIsLoading(false));
+
+        if (event === 'SIGNED_OUT') {
+          if (interactiveAuthRef.current) return;
+          void applySession(null, 'event');
+          return;
+        }
+
+        void applySession(currentSession, 'event');
       }, 0);
     });
 
     return () => {
+      cancelled = true;
       subscription.unsubscribe();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const openAuthModal = (view: 'login' | 'register' | 'forgot' = 'login') => {
@@ -187,34 +292,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signIn = async (email: string, pass: string) => {
     const normalized = email.trim().toLowerCase();
-    const res = await signInUser(normalized, pass);
-    if (res.error || !res.session?.access_token || !res.user) {
-      return {
-        success: false,
-        error: res.error?.message || 'Sign in failed — no session token. Confirm email if required.',
-      };
-    }
-    setIsLoading(false);
-    await applySession(res.session);
-    const status = await needsTwoStepChallenge(res.user.id);
-    if (status.needs) {
-      setMfaPending(true);
-      // Email code is sent only when the user chooses Email on the challenge screen
+    interactiveAuthRef.current = true;
+    try {
+      // Avoid refresh-token 400 noise from a previous broken session
+      await clearStaleLocalSession();
+      const res = await signInUser(normalized, pass);
+      if (res.error || !res.session?.access_token || !res.user) {
+        return {
+          success: false,
+          error:
+            res.error?.message ||
+            'Sign in failed — no session token. Confirm email if required.',
+        };
+      }
+      setIsLoading(false);
+      await applySession(res.session, 'interactive');
       closeAuthModal();
-      return { success: true, needsMfa: true };
+      return { success: true };
+    } finally {
+      // Keep skip briefly so late SIGNED_IN callbacks are ignored
+      window.setTimeout(() => {
+        interactiveAuthRef.current = false;
+      }, 500);
     }
-    setMfaPending(false);
-    closeAuthModal();
-    return { success: true };
-  };
-
-  const completeMfa = async () => {
-    const { data } = await supabase.auth.getSession();
-    if (data.session?.user?.id) {
-      markTwoStepPassed(data.session.user.id);
-    }
-    await applySession(data.session);
-    setMfaPending(false);
   };
 
   const signUp = async (email: string, pass: string, name: string) => {
@@ -227,35 +327,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, error: res.error.message };
     }
 
-    if (res.session?.access_token && res.user) {
-      await applySession(res.session);
-      closeAuthModal();
-      return { success: true };
-    }
+    interactiveAuthRef.current = true;
+    try {
+      if (res.session?.access_token && res.user) {
+        await applySession(res.session, 'interactive');
+        closeAuthModal();
+        return { success: true };
+      }
 
-    const loginRes = await signInUser(email, pass);
-    if (!loginRes.error && loginRes.session?.access_token && loginRes.user) {
-      await applySession(loginRes.session);
-      closeAuthModal();
-      return { success: true };
-    }
+      const loginRes = await signInUser(email, pass);
+      if (!loginRes.error && loginRes.session?.access_token && loginRes.user) {
+        await applySession(loginRes.session, 'interactive');
+        closeAuthModal();
+        return { success: true };
+      }
 
-    return {
-      success: false,
-      error:
-        loginRes.error?.message ||
-        'Account created but email confirmation is required before you can sign in.',
-    };
+      return {
+        success: false,
+        error:
+          loginRes.error?.message ||
+          'Account created but email confirmation is required before you can sign in.',
+      };
+    } finally {
+      window.setTimeout(() => {
+        interactiveAuthRef.current = false;
+      }, 500);
+    }
   };
 
   const signOut = async () => {
     clearLegacyFallback();
-    clearTwoStepPass();
-    await signOutUser();
-    setUser(null);
-    setSession(null);
-    setProfile(null);
-    setMfaPending(false);
+    try {
+      await signOutUser();
+    } catch {
+      /* ignore */
+    }
+    clearAuthState();
     setIsDashboardOpen(false);
   };
 
@@ -279,6 +386,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         session,
         profile,
+        profileError,
+        profileLoading,
         isLoading,
         authModalState,
         isDashboardOpen,
@@ -291,8 +400,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signOut,
         resetPassword,
         refreshProfile,
-        mfaPending,
-        completeMfa,
       }}
     >
       {children}

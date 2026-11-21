@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Product, MerchantTab, StoreLocation } from '../../types/product';
+import { Product, MerchantTab, StoreLocation, PaymentDiscountOffer } from '../../types/product';
 import { MerchantSidebar } from './layout/MerchantSidebar';
 import { MerchantTopbar } from './layout/MerchantTopbar';
 import { OverviewPage } from './pages/Overview';
@@ -11,14 +11,17 @@ import { StoreLocationsPage } from './pages/StoreLocations';
 import { SettingsPage } from './pages/Settings';
 import {
   DeadStockPage,
-  NotificationsPage,
   OrdersAdminPage,
-  RestockPage,
   SuppliersPage,
 } from './pages/AdminOpsPages';
 import { AddProductModal } from './dashboard/AddProductModal';
 import { EditProductModal } from './dashboard/EditProductModal';
 import { DeleteConfirmation } from './dashboard/DeleteConfirmation';
+import { SupplierContactModal } from './dashboard/SupplierContactModal';
+import {
+  DeadStockSolutionsModal,
+  PaymentDiscountModal,
+} from './dashboard/InventoryActionModals';
 import { CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -32,14 +35,12 @@ import {
 import { api } from '../../lib/api';
 
 interface MerchantDashboardProps {
-  onExitToStorefront: () => void;
   onSignOut: () => void;
   merchantName?: string;
   merchantEmail?: string;
 }
 
 export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
-  onExitToStorefront,
   onSignOut,
   merchantName = 'Merchant',
   merchantEmail = '',
@@ -55,6 +56,9 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
   const [productToEdit, setProductToEdit] = useState<Product | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [supplierModalProduct, setSupplierModalProduct] = useState<Product | null>(null);
+  const [deadStockModalProduct, setDeadStockModalProduct] = useState<Product | null>(null);
+  const [paymentModalProduct, setPaymentModalProduct] = useState<Product | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -65,7 +69,22 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
   const refresh = useCallback(async () => {
     try {
       const rows = await fetchAdminProducts();
-      setProducts(rows);
+      setProducts((prev) => {
+        const extras = new Map(
+          prev.map((p) => [
+            p.id,
+            {
+              paymentOffers: p.paymentOffers,
+              supplierName: p.supplierName,
+              supplierPhone: p.supplierPhone,
+            },
+          ])
+        );
+        return rows.map((r) => {
+          const local = extras.get(r.id);
+          return local ? { ...r, ...local } : r;
+        });
+      });
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to load inventory from API');
       setProducts([]);
@@ -190,6 +209,64 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     }
   };
 
+  const handleSaveSupplierInfo = (
+    productId: string,
+    supplierName: string,
+    supplierPhone: string
+  ) => {
+    setProducts((prev) =>
+      prev.map((p) =>
+        p.id === productId
+          ? { ...p, supplierName, supplierPhone, lastUpdated: new Date().toISOString() }
+          : p
+      )
+    );
+  };
+
+  const handleSavePaymentOffers = (productId: string, offers: PaymentDiscountOffer[]) => {
+    setProducts((prev) =>
+      prev.map((p) =>
+        p.id === productId
+          ? { ...p, paymentOffers: offers, lastUpdated: new Date().toISOString() }
+          : p
+      )
+    );
+    setPaymentModalProduct((prev) =>
+      prev && prev.id === productId ? { ...prev, paymentOffers: offers } : prev
+    );
+    showToast('Updated payment method discounts for SKU.');
+  };
+
+  const handleApplyDeadStockMarkdown = async (product: Product, discountPct: number) => {
+    const newPrice = Math.max(100, Math.round((product.price * (100 - discountPct)) / 100));
+    const updated = { ...product, price: newPrice, lastUpdated: new Date().toISOString() };
+    try {
+      await updateAdminProduct(updated);
+      await refresh();
+      showToast(`Applied ${discountPct}% clearance markdown on "${product.name}".`);
+    } catch (err) {
+      setProducts((prev) => prev.map((p) => (p.id === product.id ? updated : p)));
+      showToast(err instanceof Error ? err.message : `Applied ${discountPct}% markdown locally.`);
+    }
+  };
+
+  const handleRebalanceDeadStock = async (product: Product, targetStock: number) => {
+    try {
+      await adjustAdminStock(product.id, product.location, targetStock);
+      await refresh();
+      showToast(`Transferred excess units of "${product.name}" to partner city hubs.`);
+    } catch (err) {
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.id === product.id
+            ? { ...p, stock: targetStock, lastUpdated: new Date().toISOString() }
+            : p
+        )
+      );
+      showToast(err instanceof Error ? err.message : 'Rebalanced stock locally.');
+    }
+  };
+
   const lowStockCount = products.filter((p) => p.stock >= 1 && p.stock <= 10).length;
   const outOfStockCount = products.filter((p) => p.stock === 0).length;
 
@@ -212,7 +289,6 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
       <MerchantSidebar
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
-        onExitToStorefront={onExitToStorefront}
         onSignOut={onSignOut}
         merchantName={merchantName}
         merchantEmail={merchantEmail}
@@ -229,7 +305,6 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
           selectedLocation={selectedLocation}
           onSelectLocation={setSelectedLocation}
           onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
-          onExitToStorefront={onExitToStorefront}
           onSignOut={onSignOut}
           lowStockCount={lowStockCount}
           outOfStockCount={outOfStockCount}
@@ -256,6 +331,9 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
               onEditProduct={handleOpenEdit}
               onDeleteProduct={handleOpenDelete}
               onAdjustStock={handleAdjustStock}
+              onInformSupplier={(prod) => setSupplierModalProduct(prod)}
+              onSuggestDeadStockSolutions={(prod) => setDeadStockModalProduct(prod)}
+              onOpenPaymentDiscounts={(prod) => setPaymentModalProduct(prod)}
               onClearCatalog={handleClearCatalog}
               searchQuery={searchQuery}
               onSearchChange={setSearchQuery}
@@ -307,8 +385,6 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
           {currentTab === 'orders' && <OrdersAdminPage />}
           {currentTab === 'deadstock' && <DeadStockPage />}
           {currentTab === 'suppliers' && <SuppliersPage />}
-          {currentTab === 'restock' && <RestockPage />}
-          {currentTab === 'notifications' && <NotificationsPage />}
           {currentTab === 'settings' && (
             <SettingsPage merchantName={merchantName} merchantEmail={merchantEmail} />
           )}
@@ -341,6 +417,29 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
           setProductToDelete(null);
         }}
         onConfirm={handleConfirmDelete}
+      />
+
+      <SupplierContactModal
+        product={supplierModalProduct}
+        isOpen={!!supplierModalProduct}
+        onClose={() => setSupplierModalProduct(null)}
+        onSaveSupplierInfo={handleSaveSupplierInfo}
+      />
+
+      <DeadStockSolutionsModal
+        product={deadStockModalProduct}
+        isOpen={!!deadStockModalProduct}
+        onClose={() => setDeadStockModalProduct(null)}
+        onApplyMarkdown={handleApplyDeadStockMarkdown}
+        onRebalanceStock={handleRebalanceDeadStock}
+        onOpenPaymentDiscounts={(prod) => setPaymentModalProduct(prod)}
+      />
+
+      <PaymentDiscountModal
+        product={paymentModalProduct}
+        isOpen={!!paymentModalProduct}
+        onClose={() => setPaymentModalProduct(null)}
+        onSavePaymentOffers={handleSavePaymentOffers}
       />
     </div>
   );

@@ -47,12 +47,18 @@ cp .env.example .env
 Email 2FA sends a code to **any** address typed at challenge time.  
 If Resend is still on `onboarding@resend.dev` (test mode), inbox delivery may only work for the Resend owner — the API then prints the 6-digit code in the terminal (`EMAIL_2FA_CONSOLE_FALLBACK`, default on) so every clone with that `.env` can unlock. For real delivery to every inbox, verify a Resend domain (or set SMTP) and update `EMAIL_FROM`.
 
-### 4. Run (API + Vite)
+### 4. Run (API + app)
+One frontend, one login. Role chooses the portal after auth (+ MFA if enabled).
+
 ```bash
-npx tsx server/src/index.ts                 # API :4000
-npx vite --host 127.0.0.1 --port 3001       # app :3001
-# or: npm run dev  (frontend; API must still be on :4000)
+npm run api              # API :4000
+npm run dev              # App :3001
 ```
+
+- http://127.0.0.1:3001 — shared login/signup
+- After auth: `customer` → storefront, `admin` → merchant dashboard
+- Merchant admins: set `ADMIN_BOOTSTRAP_EMAILS`
+- `/api/admin/*` requires admin JWT (**403** for customers, **401** if unsigned)
 
 ### 5. Backend pipeline (Supabase)
 ```bash
@@ -66,13 +72,14 @@ Details: [`supabase/README.md`](supabase/README.md)
 
 ### 6. Build for Production
 ```bash
-npm run build
+npm run build   # outputs dist/
 ```
 
 ---
 
 ## 📊 Features
 
+- **One app**: shared login; role-based storefront vs merchant admin (no portal switcher)
 - **Merchant Admin Portal**:
   - Live Overview with 4 KPI cards (Total Products, Total Stock, Low Stock, Out of Stock)
   - Category Volume & Valuation Analytics
@@ -80,7 +87,7 @@ npm run build
   - Add, Edit, and Delete product workflows with modal dialogs
   - Shopcart-inspired visual product grid
   - Multi-city Hub logistics telemetry (Bangalore, Mumbai, Delhi)
-  - Seamless 1-click dual-mode switcher between Merchant Admin and Customer Storefront
+  - Suppliers directory with embedded supplier notification logs
 
 ---
 

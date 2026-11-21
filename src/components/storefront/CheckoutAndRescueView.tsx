@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   ArrowLeft,
   ShieldCheck,
-  Sparkles,
   AlertTriangle,
   CheckCircle2,
   MapPin,
@@ -26,6 +25,7 @@ import {
   recordPipelineEvent,
 } from '../../lib/storefrontCatalog';
 import { getStockBadgeMeta } from './ProductDetailView';
+import { ProductImage } from './ProductImage';
 
 export interface CartItemLine {
   product: MultiCityProduct;
@@ -49,8 +49,6 @@ interface CheckoutAndRescueViewProps {
   city: CityName;
   cart: CartItemLine[];
   catalog: MultiCityProduct[];
-  simulateConflict: boolean;
-  setSimulateConflict: (val: boolean) => void;
   onUpdateQty: (productId: string, quantity: number) => void;
   onRemoveItem: (productId: string) => void;
   onReplaceItem: (
@@ -71,8 +69,6 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
   city,
   cart,
   catalog,
-  simulateConflict,
-  setSimulateConflict,
   onUpdateQty,
   onRemoveItem,
   onReplaceItem,
@@ -84,18 +80,12 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
 }) => {
   const hubInfo = CITIES.find((c) => c.name === city) || CITIES[0];
 
-  // Demo Shipping Details Form (No payment fields per requirement)
-  const [customerName, setCustomerName] = useState('Abhishek Anil Kumar');
-  const [customerPhone, setCustomerPhone] = useState('+91 98765 43210');
-  const [customerAddress, setCustomerAddress] = useState(
-    `42, Tech Park Boulevard, ${hubInfo.hubName}`
-  );
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerAddress, setCustomerAddress] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [isPlacing, setIsPlacing] = useState(false);
-  const [conflictTargetId, setConflictTargetId] = useState<string>('');
-  const [showWhyModal, setShowWhyModal] = useState<boolean>(true);
-  const [forceEmptyAlternativesDemo, setForceEmptyAlternativesDemo] =
-    useState<boolean>(false);
+  const [showWhyModal, setShowWhyModal] = useState(false);
 
   const subtotal = cart.reduce(
     (sum, item) => sum + item.product.price * item.quantity,
@@ -133,25 +123,6 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
     setTimeout(() => {
       setIsPlacing(false);
 
-      // If demo conflict simulation is ON and no item is currently OOS, force the selected (or first) item to sell out
-      if (simulateConflict && conflictedLines.length === 0 && cart.length > 0) {
-        const target =
-          cart.find((l) => l.product.id === conflictTargetId) || cart[0];
-        saveStockOverride(target.product.id, city, 0);
-        recordPipelineEvent({
-          service: 'PostgreSQL',
-          topic: 'checkout.conflict_409',
-          city,
-          summary: `HTTP 409 STOCK_CONFLICT: ${target.product.name} (${target.product.sku}) hit 0 units in ${city} during concurrent lock`,
-          status: 'CONFLICT_409',
-        });
-        onRefreshCatalog();
-        setSimulateConflict(false);
-        setMode('rescue');
-        return;
-      }
-
-      // If there is already a real stock conflict in the selected city
       if (conflictedLines.length > 0) {
         const firstConflict = conflictedLines[0];
         recordPipelineEvent({
@@ -224,7 +195,7 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
               </div>
               <div>
                 <span className="px-2.5 py-0.5 rounded-full bg-[#DCEFE3] text-[#064E36] text-[10px] font-extrabold uppercase tracking-wider">
-                  PostgreSQL Atomic Commit Verified
+                  Inventory Reserved
                 </span>
                 <h1 className="font-display font-black text-2xl sm:text-3xl text-[#0A2540] mt-1">
                   Order Confirmed!
@@ -261,14 +232,14 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
 
             <div className="rounded-2xl bg-[#EAF4EC]/60 border border-[#C8E8D9] p-4 space-y-1">
               <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#064E36]">
-                Fulfillment City & Event Pipeline
+                Fulfillment City
               </p>
               <p className="text-sm font-extrabold text-[#0A2540] flex items-center gap-1.5">
                 <MapPin className="w-4 h-4 text-[#064E36]" />
                 {confirmedOrder.city} Regional Hub
               </p>
               <p className="text-xs text-[#202A24]/80">
-                Stock decremented atomically in PostgreSQL & synced to OpenSearch via Kafka outbox.
+                Your order is reserved from live merchant inventory at this hub.
               </p>
             </div>
           </div>
@@ -285,9 +256,10 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
                   className="p-4 bg-white flex items-center justify-between gap-4"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <img
+                    <ProductImage
                       src={line.product.image}
                       alt={line.product.name}
+                      category={line.product.category}
                       className="w-12 h-12 rounded-xl object-contain bg-[#FAF9F5] border border-[#E8EBE7] p-1"
                     />
                     <div className="min-w-0">
@@ -313,7 +285,7 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
             <div>
               <p className="text-xs text-white/70">Total Order Value (Free Hub Delivery)</p>
               <p className="text-[11px] text-[#65B99B] font-semibold">
-                Demo Order · No Payment Charged
+                Confirmed · Free hub delivery
               </p>
             </div>
             <p className="font-display font-black text-2xl">
@@ -328,7 +300,7 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
               onClick={onOpenPipelineStatus}
               className="px-5 py-3 rounded-full bg-[#FAF9F5] hover:bg-[#EAF4EC] border border-[#E8EBE7] text-xs font-extrabold text-[#0A2540] cursor-pointer transition-all"
             >
-              View PostgreSQL → Kafka → OpenSearch Flow
+              Profile &amp; Security
             </button>
             <button
               type="button"
@@ -361,38 +333,23 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
             Back to Checkout Summary
           </button>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowWhyModal((v) => !v)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#EAF4EC] border border-[#C8E8D9] text-xs font-extrabold text-[#064E36] cursor-pointer"
-            >
-              <HelpCircle className="w-3.5 h-3.5" />
-              {showWhyModal ? 'Hide' : 'Show'} “Why these alternatives?”
-            </button>
-            <button
-              type="button"
-              onClick={() => setForceEmptyAlternativesDemo((v) => !v)}
-              className={`px-3.5 py-1.5 rounded-full border text-xs font-bold cursor-pointer transition-all ${
-                forceEmptyAlternativesDemo
-                  ? 'bg-[#0A2540] text-white border-[#0A2540]'
-                  : 'bg-white text-[#7C877F] border-[#E8EBE7] hover:text-[#0A2540]'
-              }`}
-            >
-              {forceEmptyAlternativesDemo
-                ? 'Showing: No-Alternatives Fallback'
-                : 'Test “No Alternatives Exist” Case'}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setShowWhyModal((v) => !v)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#EAF4EC] border border-[#C8E8D9] text-xs font-extrabold text-[#064E36] cursor-pointer"
+          >
+            <HelpCircle className="w-3.5 h-3.5" />
+            {showWhyModal ? 'Hide' : 'Show'} why these alternatives
+          </button>
         </div>
 
         {/* Hero Conflict Banner */}
         <div className="rounded-[28px] bg-gradient-to-r from-[#0A2540] via-[#103C2D] to-[#064E36] text-white p-6 sm:p-8 shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div className="space-y-2 max-w-2xl">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#F5EBCB] text-[#7A5800] text-[11px] font-extrabold uppercase tracking-wider">
-                <Sparkles className="w-3.5 h-3.5" />
-                HTTP 409 Stock Conflict · Smart Basket Rescue
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-[#C8E8D9] text-[11px] font-extrabold uppercase tracking-wider">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Stock conflict · pick a replacement
               </div>
               <h1 className="font-display font-black text-2xl sm:text-3xl leading-tight">
                 {conflictedLines.length > 0
@@ -474,9 +431,10 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
                   className="py-3 flex items-center justify-between gap-4"
                 >
                   <div className="flex items-center gap-3">
-                    <img
+                    <ProductImage
                       src={line.product.image}
                       alt={line.product.name}
+                      category={line.product.category}
                       className="w-12 h-12 rounded-xl object-contain bg-[#FAF9F5] border border-[#E8EBE7] p-1"
                     />
                     <div>
@@ -505,27 +463,22 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
         {/* Section 2: Conflicted Items & Up to 4 Alternatives */}
         {conflictedLines.length > 0 ? (
           conflictedLines.map((conflict) => {
-            const { alternatives, minPrice, maxPrice } = getRescueAlternatives(
-              conflict.product,
-              city,
-              catalog
-            );
-            const displayedAlternatives = forceEmptyAlternativesDemo
-              ? []
-              : alternatives;
+            const { alternatives: displayedAlternatives, minPrice, maxPrice } =
+              getRescueAlternatives(conflict.product, city, catalog);
 
             return (
               <div
                 key={conflict.product.id}
-                className="rounded-[28px] bg-white border-2 border-[#E8C86B] p-6 sm:p-8 space-y-6 shadow-xs"
+                className="rounded-[28px] bg-white border-2 border-red-200 p-6 sm:p-8 space-y-6 shadow-xs"
               >
                 {/* Sold-out item header */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-[#E8EBE7]">
                   <div className="flex items-center gap-4">
                     <div className="relative">
-                      <img
+                      <ProductImage
                         src={conflict.product.image}
                         alt={conflict.product.name}
+                        category={conflict.product.category}
                         className="w-16 h-16 rounded-2xl object-contain bg-[#FAF9F5] border border-red-200 p-1.5 opacity-60"
                       />
                       <span className="absolute -top-2 -right-2 px-2 py-0.5 rounded-full bg-red-600 text-white text-[9px] font-black uppercase">
@@ -590,9 +543,10 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
                           >
                             <div>
                               <div className="relative aspect-4/3 rounded-xl bg-white border border-[#E8EBE7] p-3 mb-3 flex items-center justify-center">
-                                <img
+                                <ProductImage
                                   src={alt.image}
                                   alt={alt.name}
+                                  category={alt.category}
                                   className="w-full h-full object-contain"
                                 />
                                 <span
@@ -638,7 +592,7 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
                                   service: 'OpenSearch',
                                   topic: 'rescue.alternative_swapped',
                                   city,
-                                  summary: `Smart Basket Rescue replaced ${conflict.product.sku} with ${alt.sku} in ${city}`,
+                                  summary: `Replaced ${conflict.product.sku} with ${alt.sku} in ${city}`,
                                   status: 'INDEXED',
                                 });
                                 onReplaceItem(
@@ -754,73 +708,21 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
         </div>
       </div>
 
-      {/* Judge / Demo Stock Conflict Simulator Banner */}
-      <div className="rounded-[24px] bg-gradient-to-r from-[#F5EBCB] via-[#FAF3DD] to-[#EAF4EC] border border-[#E8C86B] p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#0A2540] text-[#E8C86B] flex items-center justify-center shrink-0 mt-0.5">
-            <Sparkles className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <p className="text-xs font-extrabold uppercase tracking-wider text-[#0A2540]">
-                Interactive Demo Mode · Smart Basket Rescue Trigger
-              </p>
-              <span className="px-2 py-0.5 rounded-full bg-[#064E36] text-white text-[10px] font-bold">
-                Core Differentiator
-              </span>
-            </div>
-            <p className="text-xs text-[#202A24]/80 mt-0.5">
-              Enable this toggle to simulate another customer buying the last unit of an item in{' '}
-              <strong>{city}</strong> right as you click <strong>Place Order</strong> (triggers HTTP 409 & Smart Basket Rescue).
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 shrink-0">
-          {simulateConflict && cart.length > 1 && (
-            <select
-              value={conflictTargetId || cart[0]?.product.id || ''}
-              onChange={(e) => setConflictTargetId(e.target.value)}
-              className="px-3 py-2 rounded-xl bg-white border border-[#E8C86B] text-xs font-bold text-[#0A2540]"
-            >
-              {cart.map((line) => (
-                <option key={line.product.id} value={line.product.id}>
-                  Sell out: {line.product.name.slice(0, 26)}...
-                </option>
-              ))}
-            </select>
-          )}
-
-          <label className="inline-flex items-center gap-2.5 px-4 py-2.5 rounded-full bg-white border border-[#E8C86B] cursor-pointer shadow-2xs">
-            <input
-              type="checkbox"
-              checked={simulateConflict}
-              onChange={(e) => setSimulateConflict(e.target.checked)}
-              className="w-4 h-4 accent-[#064E36] rounded cursor-pointer"
-            />
-            <span className="text-xs font-extrabold text-[#0A2540]">
-              Simulate Stock Conflict on Place Order
-            </span>
-          </label>
-        </div>
-      </div>
-
       {/* Main 2-Column Checkout Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left 7 Cols: Demo Shipping Details (No Payment Fields) */}
         <div className="lg:col-span-7 space-y-6">
           <div className="rounded-[28px] bg-white border border-[#E8EBE7] p-6 sm:p-8 space-y-6 shadow-2xs">
             <div className="flex items-center justify-between border-b border-[#E8EBE7] pb-4">
               <div>
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#064E36]">
-                  Step 1 of 1 · Fast Demo Checkout
+                  Checkout
                 </span>
                 <h2 className="font-display font-black text-xl text-[#0A2540]">
                   Delivery Details ({city})
                 </h2>
               </div>
               <span className="px-3 py-1 rounded-full bg-[#FAF9F5] border border-[#E8EBE7] text-[11px] font-bold text-[#7C877F]">
-                No Payment Fields Required
+                Cash on delivery
               </span>
             </div>
 
@@ -930,9 +832,10 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
                   return (
                     <div key={line.product.id} className="py-3.5 space-y-2">
                       <div className="flex items-start gap-3">
-                        <img
+                        <ProductImage
                           src={line.product.image}
                           alt={line.product.name}
+                          category={line.product.category}
                           className="w-14 h-14 rounded-xl object-contain bg-[#FAF9F5] border border-[#E8EBE7] p-1 shrink-0"
                         />
                         <div className="flex-1 min-w-0">
@@ -990,9 +893,9 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
                       </div>
 
                       {isLineConflict && (
-                        <div className="rounded-xl bg-[#F5EBCB] border border-[#E8C86B] px-3 py-1.5 text-[11px] font-bold text-[#7A5800] flex items-center gap-1.5">
+                        <div className="rounded-xl bg-red-50 border border-red-200 px-3 py-1.5 text-[11px] font-bold text-red-800 flex items-center gap-1.5">
                           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                          Stock conflict in {city} — Smart Basket Rescue will launch on Place Order.
+                          Out of stock in {city} — choose a replacement after placing order.
                         </div>
                       )}
                     </div>
@@ -1028,21 +931,12 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
               type="button"
               disabled={cart.length === 0 || isPlacing}
               onClick={handlePlaceOrder}
-              className={`w-full py-4 px-6 rounded-full font-display font-black text-sm flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm ${
-                simulateConflict || conflictedLines.length > 0
-                  ? 'bg-[#0A2540] hover:bg-[#101413] text-white'
-                  : 'bg-[#064E36] hover:bg-[#103C2D] text-white'
-              } disabled:opacity-40`}
+              className="w-full py-4 px-6 rounded-full font-display font-black text-sm flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm bg-[#064E36] hover:bg-[#103C2D] text-white disabled:opacity-40"
             >
               {isPlacing ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin text-[#65B99B]" />
-                  Acquiring PostgreSQL Stock Lock...
-                </>
-              ) : simulateConflict || conflictedLines.length > 0 ? (
-                <>
-                  <Sparkles className="w-4 h-4 text-[#E8C86B]" />
-                  Place Order (Will Trigger Smart Basket Rescue)
+                  Reserving live stock...
                 </>
               ) : (
                 <>

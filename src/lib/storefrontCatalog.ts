@@ -1,5 +1,6 @@
 import { loadCatalog } from './merchantInventoryStore';
 import { Product as MerchantProduct } from '../types/product';
+import { resolveProductImage } from './productImage';
 
 export type CityName = 'Bengaluru' | 'Mumbai' | 'Delhi';
 
@@ -497,7 +498,7 @@ function mapMerchantToMultiCity(p: MerchantProduct, idx: number): MultiCityProdu
     category: p.category,
     price: p.price,
     mrp: Math.round((p.price * 1.24) / 10) * 10,
-    image: p.image,
+    image: resolveProductImage(p.image, p.category),
     description: p.description,
     specs: parseSpecsFromDescription(p.description, p.category, p.sku),
     rating: Number((4.7 + (idx % 3) * 0.1).toFixed(1)),
@@ -506,6 +507,22 @@ function mapMerchantToMultiCity(p: MerchantProduct, idx: number): MultiCityProdu
     isJustIn: idx % 2 === 0,
     cityStock,
   };
+}
+
+function applyStockOverrides(baseList: MultiCityProduct[]): MultiCityProduct[] {
+  const overrides = loadStockOverrides();
+  return baseList.map((item) => {
+    const itemOverrides = overrides[item.id];
+    if (!itemOverrides) return item;
+    return {
+      ...item,
+      cityStock: {
+        Bengaluru: itemOverrides.Bengaluru ?? item.cityStock.Bengaluru,
+        Mumbai: itemOverrides.Mumbai ?? item.cityStock.Mumbai,
+        Delhi: itemOverrides.Delhi ?? item.cityStock.Delhi,
+      },
+    };
+  });
 }
 
 /**
@@ -526,20 +543,81 @@ export function getUnifiedStorefrontCatalog(): MultiCityProduct[] {
         ]
       : DEFAULT_MULTI_CITY_CATALOG;
 
-  const overrides = loadStockOverrides();
+  return applyStockOverrides(baseList);
+}
 
-  return baseList.map((item) => {
-    const itemOverrides = overrides[item.id];
-    if (!itemOverrides) return item;
-    return {
-      ...item,
-      cityStock: {
-        Bengaluru: itemOverrides.Bengaluru ?? item.cityStock.Bengaluru,
-        Mumbai: itemOverrides.Mumbai ?? item.cityStock.Mumbai,
-        Delhi: itemOverrides.Delhi ?? item.cityStock.Delhi,
-      },
-    };
-  });
+type LiveSearchItem = {
+  productId: string;
+  sku: string;
+  name: string;
+  brand?: string;
+  category: string;
+  description?: string;
+  price: number;
+  imageUrl?: string;
+  specs?: Record<string, string>;
+  stock: number;
+};
+
+/**
+ * Live catalog from merchant uploads (Express / OpenSearch / Postgres).
+ * Merges Bengaluru, Mumbai, Delhi stock so customers can shop & order real inventory.
+ */
+export async function fetchLiveStorefrontCatalog(): Promise<MultiCityProduct[]> {
+  const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:4000';
+  const cities: CityName[] = ['Bengaluru', 'Mumbai', 'Delhi'];
+  const byId = new Map<string, MultiCityProduct>();
+
+  await Promise.all(
+    cities.map(async (city) => {
+      try {
+        const res = await fetch(
+          `${API_URL}/api/products?city=${encodeURIComponent(city)}&pageSize=500`
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as { items?: LiveSearchItem[] };
+        for (const item of data.items || []) {
+          const id = item.productId;
+          const existing = byId.get(id);
+          if (existing) {
+            existing.cityStock[city] = Number(item.stock) || 0;
+            continue;
+          }
+          const price = Number(item.price) || 0;
+          byId.set(id, {
+            id,
+            sku: item.sku,
+            name: item.name,
+            brand: item.brand || item.name.split(/\s+/)[0] || 'Celerity',
+            category: item.category || 'General',
+            price,
+            mrp: Math.round((price * 1.18) / 10) * 10,
+            image: resolveProductImage(item.imageUrl, item.category),
+            description: item.description || '',
+            specs:
+              item.specs && Object.keys(item.specs).length
+                ? item.specs
+                : parseSpecsFromDescription(
+                    item.description || '',
+                    item.category || 'General',
+                    item.sku
+                  ),
+            rating: 4.8,
+            soldCount: 120,
+            isBestDeal: price < 50000,
+            isJustIn: true,
+            cityStock: { Bengaluru: 0, Mumbai: 0, Delhi: 0, [city]: Number(item.stock) || 0 },
+          });
+        }
+      } catch {
+        /* city fetch failed — others may still succeed */
+      }
+    })
+  );
+
+  const live = Array.from(byId.values());
+  if (live.length === 0) return getUnifiedStorefrontCatalog();
+  return applyStockOverrides(live);
 }
 
 export function resetPipelineEvents(): void {
@@ -549,15 +627,20 @@ export function resetPipelineEvents(): void {
 
 // ── Typo-Tolerant Search Engine (Levenshtein + Alias Dictionary) ──
 const TYPO_DICTIONARY: { canonical: string; typos: string[] }[] = [
-  { canonical: 'laptop', typos: ['lapto', 'labtop', 'laptp', 'leptop', 'laptpo', 'notbook'] },
+  { canonical: 'laptop', typos: ['lapto', 'labtop', 'laptp', 'leptop', 'laptpo', 'notbook', 'notebook'] },
   { canonical: 'headphones', typos: ['headfone', 'hedphone', 'headphon', 'headset', 'earfone'] },
   { canonical: 'washing', typos: ['washng', 'wahsing', 'waser', 'washer', 'laundry'] },
   { canonical: 'samsung', typos: ['samung', 'samsng', 'smasung'] },
   { canonical: 'bosch', typos: ['bosh', 'bocsh', 'boshc'] },
   { canonical: 'whirlpool', typos: ['whirlpol', 'wirlpool', 'whirpool'] },
-  { canonical: 'lenovo', typos: ['lenvo', 'lenov', 'thinkpd'] },
+  { canonical: 'lenovo', typos: ['lenvo', 'lenov', 'thinkpd', 'thinkpad'] },
   { canonical: 'macbook', typos: ['macbok', 'mcbook', 'appl'] },
   { canonical: 'smartphone', typos: ['smartfone', 'phne', 'moble', 'iphone'] },
+  { canonical: 'dell', typos: ['del', 'dll', 'inspiron'] },
+  { canonical: 'asus', typos: ['assus', 'azu', 'rog', 'tuf'] },
+  { canonical: 'acer', typos: ['aceraspire', 'aspire'] },
+  { canonical: 'hp', typos: ['hewlett', 'pavilion'] },
+  { canonical: 'gaming', typos: ['gamming', 'gming', 'gameing'] },
 ];
 
 function levenshtein(a: string, b: string): number {
@@ -599,11 +682,20 @@ export function matchesTypoTolerantSearch(
 
   const corrected = resolveTypoCorrection(q);
   const effective = corrected || q;
+  const sku = product.sku.toLowerCase();
+  const name = product.name.toLowerCase();
+  const brand = product.brand.toLowerCase();
+  const category = product.category.toLowerCase();
+  const haystack = `${name} ${brand} ${category} ${sku} ${product.description}`.toLowerCase();
 
-  const haystack = `${product.name} ${product.brand} ${product.category} ${product.sku} ${product.description}`.toLowerCase();
-
+  // Ranked smart match
+  if (sku === q || sku.includes(q)) return { matches: true, score: 1.2 };
+  if (name.startsWith(q) || brand === q) return { matches: true, score: 1.1 };
   if (haystack.includes(q)) return { matches: true, score: 1 };
   if (corrected && haystack.includes(corrected)) return { matches: true, score: 0.95 };
+  if (category.includes(effective) || brand.includes(effective)) {
+    return { matches: true, score: 0.9 };
+  }
 
   // Token-level fuzzy match (Levenshtein <= 2 for tokens >= 4 chars)
   const words = haystack.split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
@@ -623,12 +715,177 @@ export function matchesTypoTolerantSearch(
     }
   }
 
-  if (matchedTokens > 0 && matchedTokens >= queryTokens.length) {
-    return { matches: true, score: 0.8 };
+  if (matchedTokens > 0 && matchedTokens >= Math.ceil(queryTokens.length * 0.6)) {
+    return { matches: true, score: 0.75 + matchedTokens * 0.05 };
   }
 
   return { matches: false, score: 0 };
 }
+
+export type SmartSearchReason = 'in_stock' | 'sold_out' | 'alternative';
+
+export type SmartSearchHit = {
+  product: MultiCityProduct;
+  reason: SmartSearchReason;
+  /** When reason=alternative, which sold-out SKU it replaces */
+  replacesSku?: string;
+  replacesName?: string;
+};
+
+/**
+ * Smart search for first-come-first-serve inventory:
+ * 1) Rank matches (OpenSearch + typo fuzzy)
+ * 2) Prefer products still in stock in the active city
+ * 3) When the matched SKU is sold out (another shopper took the last unit),
+ *    inject Smart Basket Rescue alternatives (±20% price, same category, in stock)
+ */
+export async function smartSearchProducts(input: {
+  q: string;
+  city: CityName;
+  catalog: MultiCityProduct[];
+  limit?: number;
+}): Promise<{
+  products: MultiCityProduct[];
+  hits: SmartSearchHit[];
+  mode: 'local' | 'opensearch' | 'postgres' | 'hybrid';
+  suggestion: string | null;
+  soldOutCount: number;
+  alternativeCount: number;
+}> {
+  const q = input.q.trim();
+  const suggestion = resolveTypoCorrection(q);
+  const limit = input.limit ?? 24;
+  const city = input.city;
+
+  const localRanked = input.catalog
+    .map((p) => ({ product: p, ...matchesTypoTolerantSearch(p, q) }))
+    .filter((r) => r.matches)
+    .sort((a, b) => b.score - a.score);
+
+  const empty = {
+    products: [] as MultiCityProduct[],
+    hits: [] as SmartSearchHit[],
+    mode: 'local' as const,
+    suggestion: null as string | null,
+    soldOutCount: 0,
+    alternativeCount: 0,
+  };
+
+  if (!q) {
+    const hits: SmartSearchHit[] = input.catalog.slice(0, limit).map((product) => ({
+      product,
+      reason: (product.cityStock[city] ?? 0) > 0 ? 'in_stock' : 'sold_out',
+    }));
+    return {
+      ...empty,
+      products: hits.map((h) => h.product),
+      hits,
+      suggestion: null,
+      soldOutCount: hits.filter((h) => h.reason === 'sold_out').length,
+    };
+  }
+
+  let ranked: MultiCityProduct[] = localRanked.map((r) => r.product);
+  let mode: 'local' | 'opensearch' | 'postgres' | 'hybrid' = 'local';
+
+  const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:4000';
+  try {
+    const params = new URLSearchParams({
+      q: suggestion || q,
+      city,
+      pageSize: String(Math.max(limit, 40)),
+    });
+    const res = await fetch(`${API_URL}/api/products?${params}`);
+    if (res.ok) {
+      const data = (await res.json()) as {
+        mode?: string;
+        items?: Array<{ productId: string; sku: string; stock?: number }>;
+      };
+      const byId = new Map(input.catalog.map((p) => [p.id, p]));
+      const bySku = new Map(input.catalog.map((p) => [p.sku.toUpperCase(), p]));
+      const fromApi: MultiCityProduct[] = [];
+      for (const item of data.items || []) {
+        const hit =
+          byId.get(item.productId) || bySku.get(String(item.sku || '').toUpperCase());
+        if (!hit) continue;
+        // Prefer freshest city stock from search hit when provided
+        const merged =
+          typeof item.stock === 'number'
+            ? {
+                ...hit,
+                cityStock: { ...hit.cityStock, [city]: Number(item.stock) },
+              }
+            : hit;
+        if (!fromApi.some((p) => p.id === merged.id)) fromApi.push(merged);
+      }
+      const seen = new Set(fromApi.map((p) => p.id));
+      for (const row of localRanked) {
+        if (seen.has(row.product.id)) continue;
+        fromApi.push(row.product);
+        seen.add(row.product.id);
+        if (fromApi.length >= limit) break;
+      }
+      ranked = fromApi;
+      mode =
+        data.mode === 'opensearch' || data.mode === 'postgres'
+          ? localRanked.length
+            ? 'hybrid'
+            : data.mode
+          : 'hybrid';
+    }
+  } catch {
+    /* keep local ranked */
+  }
+
+  const inStock: SmartSearchHit[] = [];
+  const soldOut: SmartSearchHit[] = [];
+  for (const product of ranked) {
+    const stock = product.cityStock[city] ?? 0;
+    if (stock > 0) {
+      inStock.push({ product, reason: 'in_stock' });
+    } else {
+      soldOut.push({ product, reason: 'sold_out' });
+    }
+  }
+
+  // First-come-first-serve rescue: for sold-out matches, surface live alternatives
+  const altHits: SmartSearchHit[] = [];
+  const seenIds = new Set(inStock.map((h) => h.product.id));
+  for (const sold of soldOut.slice(0, 5)) {
+    const { alternatives } = getRescueAlternatives(sold.product, city, input.catalog);
+    for (const alt of alternatives) {
+      if (seenIds.has(alt.id)) continue;
+      if ((alt.cityStock[city] ?? 0) <= 0) continue;
+      seenIds.add(alt.id);
+      altHits.push({
+        product: alt,
+        reason: 'alternative',
+        replacesSku: sold.product.sku,
+        replacesName: sold.product.name,
+      });
+    }
+  }
+
+  // Order: available matches → rescue alternatives → sold-out (for transparency)
+  const hits = [...inStock, ...altHits, ...soldOut].slice(0, limit);
+  return {
+    products: hits.map((h) => h.product),
+    hits,
+    mode,
+    suggestion,
+    soldOutCount: soldOut.length,
+    alternativeCount: altHits.length,
+  };
+}
+
+export const SMART_SEARCH_CHIPS = [
+  'laptop',
+  'gaming',
+  'asus',
+  'dell',
+  'headphones',
+  'washing',
+] as const;
 
 /**
  * Deterministic Smart Basket Rescue Alternatives:

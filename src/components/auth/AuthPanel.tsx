@@ -16,6 +16,11 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import {
+  getLoginIntent,
+  setLoginIntent,
+  type LoginIntent,
+} from '../../lib/loginIntent';
 
 type AuthView = 'login' | 'signup' | 'forgot';
 
@@ -23,11 +28,21 @@ export const AuthPanel: React.FC = () => {
   const { signIn, signUp, resetPassword } = useAuth();
 
   const [view, setView] = useState<AuthView>('login');
+  const [loginIntent, setLoginIntentState] = useState<LoginIntent>(() => getLoginIntent());
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
+
+  const chooseIntent = (intent: LoginIntent) => {
+    setLoginIntentState(intent);
+    setLoginIntent(intent);
+  };
+
+  useEffect(() => {
+    setLoginIntent(loginIntent);
+  }, []);
 
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -149,9 +164,32 @@ export const AuthPanel: React.FC = () => {
 
   return (
     <div className="relative w-full h-full min-h-screen text-[#0A2540] flex flex-col justify-between p-4 sm:p-8 lg:p-12 overflow-y-auto selection:bg-[#10A37F] selection:text-white">
-      {/* ── 1. Top Panel Header with Quick View Switcher ── */}
-      <div className="relative z-10 flex items-center justify-end mb-6 sm:mb-10">
-        {/* Quick View Switcher Pill in Zenvo Glass */}
+      {/* ── 1. Top: portal intent + Sign in / Register (same pill style) ── */}
+      <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 mb-6 sm:mb-10">
+        <div className="flex items-center p-1 rounded-full bg-white/60 border border-white/80 backdrop-blur-md shadow-xs text-xs font-bold shrink-0">
+          <button
+            type="button"
+            onClick={() => chooseIntent('customer')}
+            className={`px-3.5 py-1.5 rounded-full transition-all cursor-pointer whitespace-nowrap ${
+              loginIntent === 'customer'
+                ? 'bg-[#0A2540] text-white shadow-xs'
+                : 'text-[#0A2540]/70 hover:text-[#0A2540]'
+            }`}
+          >
+            Customer
+          </button>
+          <button
+            type="button"
+            onClick={() => chooseIntent('merchant')}
+            className={`px-3.5 py-1.5 rounded-full transition-all cursor-pointer whitespace-nowrap ${
+              loginIntent === 'merchant'
+                ? 'bg-[#0A2540] text-white shadow-xs'
+                : 'text-[#0A2540]/70 hover:text-[#0A2540]'
+            }`}
+          >
+            Merchant
+          </button>
+        </div>
         <div className="flex items-center p-1 rounded-full bg-white/60 border border-white/80 backdrop-blur-md shadow-xs text-xs font-bold shrink-0">
           <button
             type="button"

@@ -9,7 +9,9 @@ loadDotenv({ path: path.join(root, '.env') });
 const envSchema = z.object({
   NODE_ENV: z.string().default('development'),
   API_PORT: z.coerce.number().default(4000),
-  CORS_ORIGIN: z.string().default('http://127.0.0.1:3001'),
+  CORS_ORIGIN: z
+    .string()
+    .default('http://127.0.0.1:3001,http://localhost:3001'),
 
   DATABASE_URL: z.string().min(1).optional(),
   PGHOST: z.string().optional(),

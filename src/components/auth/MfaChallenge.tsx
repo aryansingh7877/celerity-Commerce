@@ -43,14 +43,31 @@ export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel
         setLoading(false);
         return;
       }
+      // Always unlock via email OTP first (reliable for both portals).
+      // Authenticator is optional — only offer it if challenge can start.
       const avail = await getTwoStepAvailability(user.id);
       if (cancelled) return;
-      setCanEmail(avail.email);
-      setCanTotp(avail.totp);
+      setCanEmail(true);
       setEmailInput(user.email || '');
-      const initial: TwoStepMethod = avail.totp ? 'totp' : 'email';
-      setMethod(avail.email || avail.totp ? initial : 'email');
-      setLoading(false);
+      setMethod('email');
+      if (avail.totp) {
+        const { factors } = await listVerifiedTotpFactors();
+        const factor = factors[0];
+        if (factor) {
+          const { data, error: chErr } = await challengeTotpFactor(factor.id);
+          if (!cancelled && data?.id && !chErr) {
+            setCanTotp(true);
+            setFactorId(factor.id);
+            setChallengeId(data.id);
+          } else {
+            // Stuck / forbidden TOTP factor — keep email path only
+            setCanTotp(false);
+          }
+        }
+      } else {
+        setCanTotp(false);
+      }
+      if (!cancelled) setLoading(false);
     })();
     return () => {
       cancelled = true;
@@ -77,14 +94,21 @@ export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel
         const { factors, error: listErr } = await listVerifiedTotpFactors();
         if (cancelled) return;
         if (listErr || !factors[0]) {
-          setError(listErr?.message || 'No authenticator enrolled.');
+          setCanTotp(false);
+          setMethod('email');
+          setError('Authenticator unavailable. Use email code instead.');
           return;
         }
         setFactorId(factors[0].id);
         const { data, error: chErr } = await challengeTotpFactor(factors[0].id);
         if (cancelled) return;
         if (chErr || !data?.id) {
-          setError(chErr?.message || 'Could not start authenticator challenge.');
+          setCanTotp(false);
+          setMethod('email');
+          setError(
+            chErr?.message ||
+              'Authenticator challenge blocked. Use the email code option instead.'
+          );
           return;
         }
         setChallengeId(data.id);

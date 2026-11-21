@@ -5,7 +5,6 @@ import {
   Search,
   MapPin,
   Sparkles,
-  LayoutDashboard,
   LogOut,
   Package,
   CheckCircle2,
@@ -14,8 +13,7 @@ import {
   SlidersHorizontal,
   ChevronLeft,
   ChevronRight,
-  Activity,
-  RotateCcw,
+  User,
   X,
   ArrowRight,
   AlertCircle,
@@ -28,10 +26,13 @@ import {
   getSavedCity,
   saveSelectedCity,
   getUnifiedStorefrontCatalog,
+  fetchLiveStorefrontCatalog,
   resolveTypoCorrection,
   matchesTypoTolerantSearch,
+  smartSearchProducts,
+  SMART_SEARCH_CHIPS,
+  type SmartSearchHit,
   recordPipelineEvent,
-  clearStockOverrides,
 } from '../../lib/storefrontCatalog';
 import { CartDrawer } from './CartDrawer';
 import { ProductDetailView, getStockBadgeMeta } from './ProductDetailView';
@@ -40,7 +41,8 @@ import {
   CartItemLine,
   ConfirmedOrderRecord,
 } from './CheckoutAndRescueView';
-import { PipelineStatusView } from './PipelineStatusView';
+import { CustomerProfileSettings } from './CustomerProfileSettings';
+import { ProductImage } from './ProductImage';
 import { useAuth } from '../../context/AuthContext';
 import { BrandLogo } from '../common/BrandLogo';
 
@@ -52,17 +54,13 @@ type StorefrontScreen =
   | 'checkout'
   | 'rescue'
   | 'confirmed'
-  | 'pipeline_status';
+  | 'profile';
 
 interface ToastMessage {
   id: string;
   title: string;
   subtitle?: string;
   tone: 'success' | 'city' | 'rescue';
-}
-
-interface CustomerStorefrontProps {
-  onOpenMerchant: () => void;
 }
 
 function loadPersistedCart(catalog: MultiCityProduct[]): CartItemLine[] {
@@ -102,9 +100,7 @@ function savePersistedCart(lines: CartItemLine[]) {
   }
 }
 
-export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
-  onOpenMerchant,
-}) => {
+export const CustomerStorefront: React.FC = () => {
   const { profile, user, signOut } = useAuth();
 
   // Core multi-city catalog & persisted city selection
@@ -120,14 +116,20 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
     loadPersistedCart(getUnifiedStorefrontCatalog())
   );
   const [cartOpen, setCartOpen] = useState(false);
-  const [simulateConflict, setSimulateConflict] = useState(false);
   const [confirmedOrder, setConfirmedOrder] =
     useState<ConfirmedOrderRecord | null>(null);
 
-  // Search with 220ms debounce & typo tolerance
+  // Smart search: debounce + typo tolerance + live OpenSearch
   const [rawSearch, setRawSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
+  const [smartHits, setSmartHits] = useState<MultiCityProduct[] | null>(null);
+  const [smartHitMeta, setSmartHitMeta] = useState<SmartSearchHit[] | null>(null);
+  const [searchMode, setSearchMode] = useState<'local' | 'opensearch' | 'postgres' | 'hybrid'>(
+    'local'
+  );
+  const [soldOutCount, setSoldOutCount] = useState(0);
+  const [alternativeCount, setAlternativeCount] = useState(0);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
   // Filters, Sorting & Pagination
@@ -146,7 +148,17 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
   const [isLoadingSkeleton, setIsLoadingSkeleton] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [likedIds, setLikedIds] = useState<Record<string, boolean>>({});
+  const [navSolid, setNavSolid] = useState(false);
   const catalogSectionRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onScroll = () => setNavSolid(window.scrollY > 48);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  const navOverVideo = screen === 'home' && !navSolid;
 
   const pushToast = (
     title: string,
@@ -160,26 +172,34 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
     }, 3400);
   };
 
-  // Sync catalog when merchant admin uploads an Excel sheet
+  // Live merchant catalog (API) with local fallback
   const refreshCatalogFromStore = () => {
-    const fresh = getUnifiedStorefrontCatalog();
-    setCatalog(fresh);
-    setCart((prev) =>
-      prev
-        .map((line) => {
-          const updated = fresh.find((p) => p.id === line.product.id);
-          return updated ? { ...line, product: updated } : line;
-        })
-        .filter(Boolean)
-    );
+    void (async () => {
+      const fresh = await fetchLiveStorefrontCatalog();
+      setCatalog(fresh);
+      setCart((prev) =>
+        prev
+          .map((line) => {
+            const updated = fresh.find((p) => p.id === line.product.id);
+            return updated ? { ...line, product: updated } : line;
+          })
+          .filter(Boolean)
+      );
+    })();
   };
 
   useEffect(() => {
+    refreshCatalogFromStore();
+    const id = window.setInterval(refreshCatalogFromStore, 15_000);
     window.addEventListener(CATALOG_UPDATED_EVENT, refreshCatalogFromStore);
     window.addEventListener('storage', refreshCatalogFromStore);
+    const onFocus = () => refreshCatalogFromStore();
+    window.addEventListener('focus', onFocus);
     return () => {
+      window.clearInterval(id);
       window.removeEventListener(CATALOG_UPDATED_EVENT, refreshCatalogFromStore);
       window.removeEventListener('storage', refreshCatalogFromStore);
+      window.removeEventListener('focus', onFocus);
     };
   }, []);
 
@@ -195,6 +215,41 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
     }, 220);
     return () => clearTimeout(timer);
   }, [rawSearch]);
+
+  // Live smart search: FCFS stock — sold-out matches get in-stock alternatives
+  useEffect(() => {
+    let cancelled = false;
+    const q = debouncedSearch.trim();
+    if (!q) {
+      setSmartHits(null);
+      setSmartHitMeta(null);
+      setSoldOutCount(0);
+      setAlternativeCount(0);
+      setSearchMode('local');
+      return;
+    }
+    void (async () => {
+      // Refresh live stock first so second shopper sees post-order availability
+      const fresh = await fetchLiveStorefrontCatalog();
+      if (cancelled) return;
+      setCatalog(fresh);
+      const result = await smartSearchProducts({
+        q,
+        city,
+        catalog: fresh,
+        limit: 48,
+      });
+      if (cancelled) return;
+      setSmartHits(result.products);
+      setSmartHitMeta(result.hits);
+      setSearchMode(result.mode);
+      setSoldOutCount(result.soldOutCount);
+      setAlternativeCount(result.alternativeCount);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedSearch, city]);
 
   // Close search suggestion dropdown on outside click
   useEffect(() => {
@@ -248,9 +303,19 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
     [debouncedSearch]
   );
 
-  // Debounced search dropdown suggestions (top 5 matches)
-  const searchSuggestions = useMemo(() => {
+  // Smart search dropdown — prefer in-stock + alternatives over sold-out
+  const searchSuggestionHits = useMemo((): SmartSearchHit[] => {
     if (!debouncedSearch.trim()) return [];
+    if (smartHitMeta?.length) return smartHitMeta.slice(0, 8);
+    if (smartHits?.length) {
+      return smartHits.slice(0, 8).map((product) => ({
+        product,
+        reason:
+          (product.cityStock[city] ?? 0) > 0
+            ? ('in_stock' as const)
+            : ('sold_out' as const),
+      }));
+    }
     return catalog
       .map((p) => ({
         product: p,
@@ -258,19 +323,40 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
       }))
       .filter((item) => item.matches)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 5)
-      .map((item) => item.product);
-  }, [catalog, debouncedSearch]);
+      .slice(0, 8)
+      .map((item) => ({
+        product: item.product,
+        reason:
+          (item.product.cityStock[city] ?? 0) > 0
+            ? ('in_stock' as const)
+            : ('sold_out' as const),
+      }));
+  }, [catalog, debouncedSearch, smartHits, smartHitMeta, city]);
+
+  const hitMetaById = useMemo(() => {
+    const map = new Map<string, SmartSearchHit>();
+    for (const h of smartHitMeta || []) map.set(h.product.id, h);
+    return map;
+  }, [smartHitMeta]);
 
   // Filtered & sorted catalog for main grid
   const filteredProducts = useMemo(() => {
-    return catalog
+    const base =
+      debouncedSearch.trim() && smartHits
+        ? smartHits
+        : catalog;
+
+    return base
       .map((product) => {
         const searchResult = matchesTypoTolerantSearch(product, debouncedSearch);
         return { product, ...searchResult };
       })
       .filter(({ product, matches }) => {
-        if (debouncedSearch.trim() && !matches) return false;
+        if (debouncedSearch.trim() && smartHits) {
+          // Already ranked by smart search — keep unless filters exclude
+        } else if (debouncedSearch.trim() && !matches) {
+          return false;
+        }
         if (selectedCategory !== 'All' && product.category !== selectedCategory) {
           return false;
         }
@@ -289,11 +375,14 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
         if (sortBy === 'price_asc') return a.product.price - b.product.price;
         if (sortBy === 'price_desc') return b.product.price - a.product.price;
         if (sortBy === 'rating') return b.product.rating - a.product.rating;
+        // Keep smart-search / OpenSearch ranking when Featured
+        if (debouncedSearch.trim() && smartHits) return 0;
         return b.score - a.score;
       })
       .map(({ product }) => product);
   }, [
     catalog,
+    smartHits,
     debouncedSearch,
     selectedCategory,
     priceFilter,
@@ -401,32 +490,10 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
       ];
     });
     pushToast(
-      'Smart Basket Rescue Applied!',
-      `Replaced with ${newProduct.name} in ${city} Hub`,
-      'rescue'
+      'Item replaced',
+      `Swapped in ${newProduct.name} for ${city} Hub`,
+      'success'
     );
-  };
-
-  // 1-Click Demo Helper: Launches Smart Basket Rescue demo immediately
-  const handleLaunchRescueDemo = () => {
-    // Ensure at least 2 items are in the cart so judges see 1 item sell out while the other stays safe
-    if (cart.length < 2 && catalog.length >= 2) {
-      const inStockItems = catalog.filter((p) => (p.cityStock[city] ?? 0) > 0);
-      const itemA = inStockItems[0] || catalog[0];
-      const itemB = inStockItems[1] || catalog[1];
-      setCart([
-        { product: itemA, quantity: 1 },
-        { product: itemB, quantity: 1 },
-      ]);
-    }
-    setSimulateConflict(true);
-    setScreen('checkout');
-    pushToast(
-      'Smart Basket Rescue Demo Ready',
-      'Click "Place Order" to trigger HTTP 409 stock conflict & 1-click replacement.',
-      'rescue'
-    );
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleOpenProductDetail = (product: MultiCityProduct) => {
@@ -439,6 +506,10 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
   const resetAllFilters = () => {
     setRawSearch('');
     setDebouncedSearch('');
+    setSmartHits(null);
+    setSmartHitMeta(null);
+    setSoldOutCount(0);
+    setAlternativeCount(0);
     setSelectedCategory('All');
     setPriceFilter('all');
     setInStockOnly(false);
@@ -452,44 +523,26 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
     'Abhishek Anil';
 
   return (
-    <div className="min-h-screen bg-[#F8F8F3] text-[#101413] selection:bg-[#65B99B] selection:text-white flex flex-col">
+    <div className="min-h-screen w-full bg-[#F8F8F3] text-[#101413] selection:bg-[#65B99B] selection:text-white flex flex-col">
       {/* ───────────────────────────────────────────────────────────────────
-          1. TOP DARK UTILITY BAR (Matches reference image top dark bar)
+          1. TOP DARK UTILITY BAR — full width
       ─────────────────────────────────────────────────────────────────── */}
-      <div className="bg-[#0A2540] text-white text-[11px] font-semibold">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 flex flex-wrap items-center justify-between gap-3">
+      <div className="w-full bg-[#0A2540] text-white text-[11px] font-semibold">
+        <div className="w-full px-4 sm:px-8 lg:px-12 py-2 flex flex-wrap items-center justify-between gap-3">
           {/* Left Quick Links */}
           <div className="flex flex-wrap items-center gap-3 sm:gap-4">
             <button
               type="button"
-              onClick={onOpenMerchant}
-              className="hover:text-[#65B99B] transition-colors flex items-center gap-1.5 cursor-pointer"
-            >
-              <LayoutDashboard className="w-3.5 h-3.5 text-[#65B99B]" />
-              <span>Merchant Admin</span>
-            </button>
-            <span className="text-white/25">|</span>
-            <button
-              type="button"
               onClick={() => {
-                setScreen('pipeline_status');
+                setScreen('profile');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
               className={`hover:text-[#65B99B] transition-colors flex items-center gap-1.5 cursor-pointer ${
-                screen === 'pipeline_status' ? 'text-[#65B99B] font-extrabold' : ''
+                screen === 'profile' ? 'text-[#65B99B] font-extrabold' : ''
               }`}
             >
-              <Activity className="w-3.5 h-3.5 text-[#65B99B]" />
-              <span>System Status (PG → Kafka → OpenSearch)</span>
-            </button>
-            <span className="text-white/25 hidden sm:inline">|</span>
-            <button
-              type="button"
-              onClick={handleLaunchRescueDemo}
-              className="hidden sm:inline-flex items-center gap-1.5 text-[#E8C86B] hover:underline cursor-pointer font-bold"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Test Smart Basket Rescue</span>
+              <User className="w-3.5 h-3.5 text-[#65B99B]" />
+              <span>My Account &amp; Security</span>
             </button>
           </div>
 
@@ -523,11 +576,17 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
       </div>
 
       {/* ───────────────────────────────────────────────────────────────────
-          2. MAIN WHITE HEADER BAR (Logo | Wide Pill Search | Cart Pill | User)
+          2. TRANSPARENT FULL-WIDTH NAV (overlays hero video on home)
       ─────────────────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-[#E8EBE7]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
-          {/* Left: Brand Logo */}
+      <header
+        className={`sticky top-0 z-40 w-full transition-all duration-300 border-b backdrop-blur-md ${
+          navOverVideo
+            ? 'bg-white/30 border-white/20'
+            : 'bg-white/70 border-[#E8EBE7]/80'
+        }`}
+      >
+        <div className="w-full px-4 sm:px-8 lg:px-12 py-3.5 flex flex-wrap items-center justify-between gap-4">
+          {/* Left: Brand Logo — always dark for contrast on frosted nav */}
           <button
             type="button"
             onClick={() => {
@@ -536,14 +595,14 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
             }}
             className="flex items-center gap-2.5 text-left cursor-pointer group"
           >
-            <div className="w-10 h-10 rounded-xl bg-[#EAF4EC] border border-[#C8E8D9] p-1 flex items-center justify-center shadow-2xs group-hover:scale-105 transition-transform">
+            <div className="w-10 h-10 rounded-xl p-1 flex items-center justify-center shadow-2xs group-hover:scale-105 transition-transform bg-[#EAF4EC]/90 border border-[#C8E8D9]">
               <BrandLogo className="w-full h-full" />
             </div>
             <div>
-              <p className="font-display font-black text-xl text-[#0A2540] tracking-tight leading-none">
+              <p className="font-display font-black text-xl tracking-tight leading-none text-[#0A2540]">
                 Celerity
               </p>
-              <p className="text-[10px] font-extrabold uppercase tracking-widest text-[#064E36] mt-0.5">
+              <p className="text-[10px] font-extrabold uppercase tracking-widest mt-0.5 text-[#064E36]">
                 {city} Store
               </p>
             </div>
@@ -564,8 +623,8 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                   setSearchFocused(true);
                   if (screen !== 'home') setScreen('home');
                 }}
-                placeholder={`try "Inspiron", "LG", or typo "lapto", "headfone"...`}
-                className="w-full pl-5 pr-20 py-2.5 rounded-full bg-[#FAF9F5] border border-[#E8EBE7] text-xs sm:text-sm font-semibold text-[#0A2540] placeholder:text-[#7C877F] focus:outline-none focus:bg-white focus:border-[#064E36] focus:ring-2 focus:ring-[#65B99B]/25 transition-all"
+                placeholder={`Smart search: brand, SKU, or typo "lapto"...`}
+                className="w-full pl-5 pr-20 py-2.5 rounded-full text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#65B99B]/25 transition-all bg-white/55 border border-[#0A2540]/12 text-[#0A2540] placeholder:text-[#5E6D64] focus:bg-white/85 focus:border-[#064E36]"
               />
               {rawSearch && (
                 <button
@@ -573,8 +632,9 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                   onClick={() => {
                     setRawSearch('');
                     setDebouncedSearch('');
+                    setSmartHits(null);
                   }}
-                  className="absolute right-10 p-1 text-[#7C877F] hover:text-[#0A2540] cursor-pointer"
+                  className="absolute right-10 p-1 cursor-pointer text-[#5E6D64] hover:text-[#0A2540]"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -582,8 +642,38 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
               <Search className="absolute right-4 w-4 h-4 text-[#0A2540]" />
             </div>
 
-            {/* Debounced Suggestions Dropdown */}
+            {/* Smart Search Dropdown */}
             <AnimatePresence>
+              {searchFocused && !debouncedSearch.trim() && (
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 6 }}
+                  className="absolute left-0 right-0 top-full mt-2 rounded-2xl bg-white border border-[#E8EBE7] shadow-xl overflow-hidden z-50 p-3"
+                >
+                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#7C877F] mb-2 flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3 text-[#064E36]" />
+                    Smart search suggestions
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SMART_SEARCH_CHIPS.map((chip) => (
+                      <button
+                        key={chip}
+                        type="button"
+                        onClick={() => {
+                          setRawSearch(chip);
+                          setDebouncedSearch(chip);
+                          setSearchFocused(true);
+                          if (screen !== 'home') setScreen('home');
+                        }}
+                        className="px-2.5 py-1 rounded-full bg-[#EAF4EC] border border-[#C8E8D9] text-[11px] font-bold text-[#064E36] hover:bg-[#DCEFE3] cursor-pointer"
+                      >
+                        {chip}
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
               {searchFocused && debouncedSearch.trim().length > 0 && (
                 <motion.div
                   initial={{ opacity: 0, y: 6 }}
@@ -591,44 +681,57 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                   exit={{ opacity: 0, y: 6 }}
                   className="absolute left-0 right-0 top-full mt-2 rounded-2xl bg-white border border-[#E8EBE7] shadow-xl overflow-hidden z-50"
                 >
-                  <div className="px-4 py-2.5 bg-[#FAF9F5] border-b border-[#E8EBE7] flex items-center justify-between text-[11px]">
-                    <span className="font-extrabold text-[#0A2540]">
-                      {typoCorrection ? (
-                        <>
-                          Typo-tolerant match:{' '}
-                          <span className="text-[#064E36]">
-                            “{debouncedSearch}” → “{typoCorrection}”
-                          </span>
-                        </>
-                      ) : (
-                        <>Suggestions in {city} Hub</>
-                      )}
-                    </span>
-                    <span className="text-[#7C877F] font-semibold">
-                      {searchSuggestions.length} matches
-                    </span>
+                  <div className="px-4 py-2.5 bg-[#FAF9F5] border-b border-[#E8EBE7] flex flex-col gap-1 text-[11px]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-extrabold text-[#0A2540] inline-flex items-center gap-1.5">
+                        <Sparkles className="w-3 h-3 text-[#064E36]" />
+                        {typoCorrection ? (
+                          <>
+                            Smart match:{' '}
+                            <span className="text-[#064E36]">
+                              “{debouncedSearch}” → “{typoCorrection}”
+                            </span>
+                          </>
+                        ) : (
+                          <>Smart search · {city} Hub · first-come stock</>
+                        )}
+                      </span>
+                      <span className="text-[#7C877F] font-semibold shrink-0">
+                        {searchSuggestionHits.length} results
+                      </span>
+                    </div>
+                    {soldOutCount > 0 && (
+                      <p className="text-[10px] text-[#7A5800] font-semibold">
+                        {soldOutCount} match{soldOutCount === 1 ? '' : 'es'} just sold out
+                        {alternativeCount > 0
+                          ? ` · showing ${alternativeCount} in-stock alternative${alternativeCount === 1 ? '' : 's'}`
+                          : ''}
+                      </p>
+                    )}
                   </div>
 
-                  {searchSuggestions.length === 0 ? (
+                  {searchSuggestionHits.length === 0 ? (
                     <div className="p-4 text-center text-xs text-[#7C877F]">
-                      No products matched “{debouncedSearch}”. Try “laptop”, “washing”, or “sony”.
+                      No products matched “{debouncedSearch}”. Try “laptop”, “gaming”, or “asus”.
                     </div>
                   ) : (
-                    <div className="divide-y divide-[#E8EBE7]">
-                      {searchSuggestions.map((sug) => {
+                    <div className="divide-y divide-[#E8EBE7] max-h-80 overflow-y-auto">
+                      {searchSuggestionHits.map((hit) => {
+                        const sug = hit.product;
                         const st = sug.cityStock[city] ?? 0;
                         const badge = getStockBadgeMeta(st);
                         return (
                           <button
-                            key={sug.id}
+                            key={`${hit.reason}-${sug.id}`}
                             type="button"
                             onClick={() => handleOpenProductDetail(sug)}
                             className="w-full px-4 py-2.5 hover:bg-[#EAF4EC]/50 flex items-center justify-between gap-3 text-left cursor-pointer transition-colors"
                           >
                             <div className="flex items-center gap-3 min-w-0">
-                              <img
+                              <ProductImage
                                 src={sug.image}
                                 alt={sug.name}
+                                category={sug.category}
                                 className="w-10 h-10 rounded-lg object-contain bg-[#FAF9F5] border border-[#E8EBE7] p-1 shrink-0"
                               />
                               <div className="min-w-0">
@@ -636,7 +739,22 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                                   {sug.name}
                                 </p>
                                 <p className="text-[10px] text-[#7C877F]">
-                                  {sug.brand} · {sug.category}
+                                  {hit.reason === 'alternative' ? (
+                                    <span className="text-[#064E36] font-bold">
+                                      Alternative
+                                      {hit.replacesName
+                                        ? ` for ${hit.replacesName}`
+                                        : ' · similar in stock'}
+                                    </span>
+                                  ) : hit.reason === 'sold_out' ? (
+                                    <span className="text-[#B45309] font-bold">
+                                      Sold out in {city} · taken by earlier order
+                                    </span>
+                                  ) : (
+                                    <>
+                                      {sug.brand} · {sug.category}
+                                    </>
+                                  )}
                                 </p>
                               </div>
                             </div>
@@ -645,9 +763,15 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                                 ₹{sug.price.toLocaleString('en-IN')}
                               </p>
                               <span
-                                className={`inline-block text-[9px] font-extrabold px-2 py-0.2 rounded-full border ${badge.pillClass}`}
+                                className={`inline-block text-[9px] font-extrabold px-2 py-0.5 rounded-full border ${
+                                  hit.reason === 'alternative'
+                                    ? 'bg-[#EAF4EC] text-[#064E36] border-[#C8E8D9]'
+                                    : badge.pillClass
+                                }`}
                               >
-                                {badge.label}
+                                {hit.reason === 'alternative'
+                                  ? 'Rescue pick'
+                                  : badge.label}
                               </span>
                             </div>
                           </button>
@@ -662,22 +786,18 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
 
           {/* Right: Notification/Status Icon | Pill Cart Button [Bag | N Items] | User Profile */}
           <div className="flex items-center gap-3 order-2 md:order-3">
-            {/* Pipeline Status Quick Button */}
+            {/* Profile / Security */}
             <button
               type="button"
-              onClick={() =>
-                setScreen(
-                  screen === 'pipeline_status' ? 'home' : 'pipeline_status'
-                )
-              }
-              title="View PostgreSQL → Kafka → OpenSearch Pipeline Status"
+              onClick={() => setScreen(screen === 'profile' ? 'home' : 'profile')}
+              title="Profile & two-step verification"
               className={`relative p-2.5 rounded-full border transition-all cursor-pointer ${
-                screen === 'pipeline_status'
+                screen === 'profile'
                   ? 'bg-[#EAF4EC] border-[#064E36] text-[#064E36]'
-                  : 'bg-[#FAF9F5] border-[#E8EBE7] text-[#0A2540] hover:bg-[#EAF4EC]'
+                  : 'bg-white/55 border-[#0A2540]/12 text-[#0A2540] hover:bg-white/80'
               }`}
             >
-              <Activity className="w-4 h-4" />
+              <User className="w-4 h-4" />
               <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#064E36]" />
             </button>
 
@@ -685,7 +805,7 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
             <button
               type="button"
               onClick={() => setCartOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#FAF9F5] hover:bg-[#EAF4EC] border border-[#E8EBE7] text-xs font-extrabold text-[#0A2540] cursor-pointer transition-all shadow-2xs"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-extrabold cursor-pointer transition-all shadow-2xs border bg-white/55 border-[#0A2540]/12 text-[#0A2540] hover:bg-white/80"
             >
               <ShoppingBag className="w-4 h-4 text-[#0A2540]" />
               <span>
@@ -693,21 +813,31 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
               </span>
             </button>
 
-            <span className="h-5 w-px bg-[#E8EBE7] hidden sm:inline-block" />
+            <span className="h-5 w-px hidden sm:inline-block bg-[#0A2540]/15" />
 
             {/* User Profile Pill + Sign Out */}
             <div className="hidden sm:flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-[#064E36] text-white text-xs font-black flex items-center justify-center">
-                {userDisplayName.charAt(0).toUpperCase()}
-              </div>
-              <span className="text-xs font-bold text-[#0A2540] max-w-[110px] truncate">
-                {userDisplayName}
-              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setScreen('profile');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className="flex items-center gap-2 cursor-pointer rounded-full px-1.5 py-1 transition-colors hover:bg-white/50"
+                title="Open profile settings"
+              >
+                <div className="w-8 h-8 rounded-full bg-[#064E36] text-white text-xs font-black flex items-center justify-center">
+                  {userDisplayName.charAt(0).toUpperCase()}
+                </div>
+                <span className="text-xs font-bold max-w-[110px] truncate text-[#0A2540]">
+                  {userDisplayName}
+                </span>
+              </button>
               <button
                 type="button"
                 onClick={() => signOut()}
                 title="Sign out"
-                className="p-1.5 rounded-full text-[#7C877F] hover:text-[#0A2540] hover:bg-[#FAF9F5] cursor-pointer"
+                className="p-1.5 rounded-full cursor-pointer text-[#5E6D64] hover:text-[#0A2540] hover:bg-white/50"
               >
                 <LogOut className="w-3.5 h-3.5" />
               </button>
@@ -717,147 +847,138 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
       </header>
 
       {/* ───────────────────────────────────────────────────────────────────
-          MAIN VIEW ROUTER
+          MAIN VIEW ROUTER — full screen width
       ─────────────────────────────────────────────────────────────────── */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {screen === 'pipeline_status' ? (
-          <PipelineStatusView
-            city={city}
-            catalog={catalog}
-            onBack={() => setScreen('home')}
-            onResetStockAndTelemetry={() => {
-              refreshCatalogFromStore();
-              pushToast(
-                'Demo Stock & Telemetry Reset',
-                `Restored initial multi-city inventory across Bengaluru, Mumbai & Delhi.`,
-                'city'
-              );
-            }}
-          />
+      <main className="flex-1 w-full">
+        {screen === 'profile' ? (
+          <div className="w-full px-4 sm:px-8 lg:px-12 py-6 sm:py-8">
+            <CustomerProfileSettings onBack={() => setScreen('home')} />
+          </div>
         ) : screen === 'product_detail' && selectedProduct ? (
-          <ProductDetailView
-            product={selectedProduct}
-            city={city}
-            allProducts={catalog}
-            onBack={() => setScreen('home')}
-            onSelectCity={handleSelectCity}
-            onAddToCart={handleAddToCart}
-            onBuyNow={handleBuyNow}
-            onSelectProduct={handleOpenProductDetail}
-          />
+          <div className="w-full px-4 sm:px-8 lg:px-12 py-6 sm:py-8">
+            <ProductDetailView
+              product={selectedProduct}
+              city={city}
+              allProducts={catalog}
+              onBack={() => setScreen('home')}
+              onSelectCity={handleSelectCity}
+              onAddToCart={handleAddToCart}
+              onBuyNow={handleBuyNow}
+              onSelectProduct={handleOpenProductDetail}
+            />
+          </div>
         ) : screen === 'checkout' ||
           screen === 'rescue' ||
           screen === 'confirmed' ? (
-          <CheckoutAndRescueView
-            mode={screen}
-            setMode={(nextMode) => setScreen(nextMode)}
-            city={city}
-            cart={cart}
-            catalog={catalog}
-            simulateConflict={simulateConflict}
-            setSimulateConflict={setSimulateConflict}
-            onUpdateQty={handleUpdateQty}
-            onRemoveItem={handleRemoveItem}
-            onReplaceItem={handleReplaceItem}
-            onOrderSuccess={(order) => {
-              setConfirmedOrder(order);
-              setCart([]);
-              setScreen('confirmed');
-              pushToast(
-                `Order #${order.orderNumber} Confirmed!`,
-                `Dispatched from ${order.city} Hub`,
-                'success'
-              );
-            }}
-            confirmedOrder={confirmedOrder}
-            onBackToShop={() => setScreen('home')}
-            onOpenPipelineStatus={() => setScreen('pipeline_status')}
-            onRefreshCatalog={refreshCatalogFromStore}
-          />
+          <div className="w-full px-4 sm:px-8 lg:px-12 py-6 sm:py-8">
+            <CheckoutAndRescueView
+              mode={screen}
+              setMode={(nextMode) => setScreen(nextMode)}
+              city={city}
+              cart={cart}
+              catalog={catalog}
+              onUpdateQty={handleUpdateQty}
+              onRemoveItem={handleRemoveItem}
+              onReplaceItem={handleReplaceItem}
+              onOrderSuccess={(order) => {
+                setConfirmedOrder(order);
+                setCart([]);
+                setScreen('confirmed');
+                pushToast(
+                  `Order #${order.orderNumber} Confirmed!`,
+                  `Dispatched from ${order.city} Hub`,
+                  'success'
+                );
+              }}
+              confirmedOrder={confirmedOrder}
+              onBackToShop={() => setScreen('home')}
+              onOpenPipelineStatus={() => setScreen('profile')}
+              onRefreshCatalog={refreshCatalogFromStore}
+            />
+          </div>
         ) : (
           /* ───────────────────────────────────────────────────────────────
-             HOME / STOREFRONT CATALOG SCREEN (Modeled on Reference Image)
+             HOME — full-bleed video + full-width catalog
           ─────────────────────────────────────────────────────────────── */
-          <div className="space-y-10 pb-12">
-            {/* ── 3. TWO-COLUMN BENTO HERO SECTION ── */}
+          <div className="w-full pb-12">
+            {/* Full-screen-width hero video */}
+            <section className="relative w-full h-[min(72vh,760px)] min-h-[280px] overflow-hidden bg-[#0A2540]">
+              <video
+                className="absolute inset-0 h-full w-full object-cover"
+                src="/storefront-hero.mp4"
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                aria-label="Celerity storefront hero"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#F8F8F3] via-[#F8F8F3]/55 to-transparent pointer-events-none" />
+              <div className="absolute inset-x-0 bottom-0 px-4 sm:px-8 lg:px-12 pb-10 sm:pb-14 pt-24">
+                <p className="text-[10px] sm:text-xs font-extrabold uppercase tracking-[0.2em] text-[#064E36] mb-2">
+                  Celerity Commerce · {city} Hub
+                </p>
+                <h1 className="font-display font-black text-3xl sm:text-5xl lg:text-6xl text-[#0A2540] tracking-tight max-w-3xl leading-[1.05]">
+                  Never lose a sale to an empty shelf.
+                </h1>
+                <p className="mt-3 max-w-xl text-sm sm:text-base text-[#3D4F45]">
+                  Live merchant inventory with smart search across Bengaluru, Mumbai &amp; Delhi.
+                </p>
+              </div>
+            </section>
+
+            <div className="w-full px-4 sm:px-8 lg:px-12 pt-8 space-y-10">
+            {/* ── FEATURED PRODUCT ── */}
             {heroProduct && (
-              <section className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-                <div className="lg:col-span-8 rounded-[28px] bg-[#FAF9F5] border border-[#E8EBE7] p-6 sm:p-10 flex flex-col md:flex-row items-center justify-between gap-8 relative overflow-hidden shadow-2xs">
-                  <div className="space-y-4 max-w-md z-10">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-extrabold uppercase tracking-wider text-[#D97706]">
-                        NEW ARRIVAL!
-                      </span>
-                      <span className="px-2.5 py-0.5 rounded-full bg-[#EAF4EC] border border-[#C8E8D9] text-[10px] font-extrabold text-[#064E36]">
-                        {city} Hub · {heroProduct.cityStock[city] ?? 0} in stock
-                      </span>
-                    </div>
-
-                    <h1 className="font-display font-black text-3xl sm:text-4xl lg:text-[42px] text-[#0A2540] uppercase tracking-tight leading-[1.08]">
-                      {heroProduct.name}
-                    </h1>
-
-                    <p className="text-xs sm:text-sm text-[#7C877F] leading-relaxed line-clamp-2">
-                      {heroProduct.description}
-                    </p>
-
-                    <div className="pt-2 flex flex-wrap items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenProductDetail(heroProduct)}
-                        className="px-7 py-3.5 rounded-full bg-[#101413] hover:bg-[#0A2540] text-white text-xs font-extrabold cursor-pointer transition-all shadow-sm"
-                      >
-                        View product
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleAddToCart(heroProduct, 1)}
-                        disabled={(heroProduct.cityStock[city] ?? 0) <= 0}
-                        className="px-5 py-3.5 rounded-full bg-white hover:bg-[#EAF4EC] border border-[#E8EBE7] text-xs font-extrabold text-[#0A2540] disabled:opacity-40 cursor-pointer transition-all"
-                      >
-                        + Quick Add · ₹{heroProduct.price.toLocaleString('en-IN')}
-                      </button>
-                    </div>
+              <section className="rounded-[28px] bg-[#FAF9F5] border border-[#E8EBE7] p-6 sm:p-10 flex flex-col md:flex-row items-center justify-between gap-8 relative overflow-hidden shadow-2xs">
+                <div className="space-y-4 max-w-md z-10">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-[#D97706]">
+                      NEW ARRIVAL!
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-full bg-[#EAF4EC] border border-[#C8E8D9] text-[10px] font-extrabold text-[#064E36]">
+                      {city} Hub · {heroProduct.cityStock[city] ?? 0} in stock
+                    </span>
                   </div>
 
-                  <div
-                    onClick={() => handleOpenProductDetail(heroProduct)}
-                    className="w-56 h-56 sm:w-64 sm:h-64 rounded-[24px] bg-white border border-[#E8EBE7] p-5 flex items-center justify-center shrink-0 shadow-md cursor-pointer group"
-                  >
-                    <img
-                      src={heroProduct.image}
-                      alt={heroProduct.name}
-                      className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500"
-                    />
+                  <h1 className="font-display font-black text-3xl sm:text-4xl lg:text-[42px] text-[#0A2540] uppercase tracking-tight leading-[1.08]">
+                    {heroProduct.name}
+                  </h1>
+
+                  <p className="text-xs sm:text-sm text-[#7C877F] leading-relaxed line-clamp-2">
+                    {heroProduct.description}
+                  </p>
+
+                  <div className="pt-2 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenProductDetail(heroProduct)}
+                      className="px-7 py-3.5 rounded-full bg-[#101413] hover:bg-[#0A2540] text-white text-xs font-extrabold cursor-pointer transition-all shadow-sm"
+                    >
+                      View product
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddToCart(heroProduct, 1)}
+                      disabled={(heroProduct.cityStock[city] ?? 0) <= 0}
+                      className="px-5 py-3.5 rounded-full bg-white hover:bg-[#EAF4EC] border border-[#E8EBE7] text-xs font-extrabold text-[#0A2540] disabled:opacity-40 cursor-pointer transition-all"
+                    >
+                      + Quick Add · ₹{heroProduct.price.toLocaleString('en-IN')}
+                    </button>
                   </div>
                 </div>
 
-                <div className="lg:col-span-4 rounded-[28px] bg-gradient-to-br from-[#E8D58A] via-[#F2E2B6] to-[#F5EBCB] border border-[#E8C86B] p-6 sm:p-8 flex flex-col justify-between relative overflow-hidden shadow-2xs">
-                  <div className="space-y-3 z-10">
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#0A2540] text-[#E8C86B] text-[10px] font-extrabold uppercase tracking-wider">
-                      <Sparkles className="w-3 h-3" />
-                      Zero Failed Orders
-                    </span>
-                    <h2 className="font-display font-black text-2xl sm:text-3xl text-[#0A2540] uppercase leading-tight">
-                      SMART BASKET RESCUE IN {city.toUpperCase()}
-                    </h2>
-                    <p className="text-xs text-[#202A24]/80 leading-relaxed">
-                      If an item sells out mid-checkout in <strong>{city}</strong>, your remaining cart stays untouched while we offer up to 4 in-stock alternatives within ±20% price.
-                    </p>
-                  </div>
-
-                  <div className="pt-6 z-10 flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={handleLaunchRescueDemo}
-                      className="px-6 py-3 rounded-full bg-white hover:bg-[#0A2540] text-[#0A2540] hover:text-white text-xs font-extrabold transition-all cursor-pointer shadow-xs"
-                    >
-                      Try Rescue Flow
-                    </button>
-                    <span className="text-[11px] font-extrabold text-[#0A2540]/70">
-                      ±20% Price Match
-                    </span>
-                  </div>
+                <div
+                  onClick={() => handleOpenProductDetail(heroProduct)}
+                  className="w-56 h-56 sm:w-64 sm:h-64 rounded-[24px] bg-white border border-[#E8EBE7] p-5 flex items-center justify-center shrink-0 shadow-md cursor-pointer group"
+                >
+                  <ProductImage
+                    src={heroProduct.image}
+                    alt={heroProduct.name}
+                    category={heroProduct.category}
+                    loading="eager"
+                    className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500"
+                  />
                 </div>
               </section>
             )}
@@ -874,8 +995,8 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                   </span>
                 </div>
 
-                <span className="px-3.5 py-1 rounded-full bg-[#D97706] text-white text-xs font-extrabold tracking-wide">
-                  Ends in : 12 : 10 : 09
+                <span className="px-3.5 py-1 rounded-full bg-[#EAF4EC] text-[#064E36] text-xs font-extrabold tracking-wide">
+                  Live deals · {city}
                 </span>
               </div>
 
@@ -894,9 +1015,10 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                       <div>
                         {/* Image Container with Stock Badge & Heart */}
                         <div className="relative aspect-4/3 rounded-2xl bg-[#FAF9F5] p-3 mb-3 flex items-center justify-center overflow-hidden">
-                          <img
+                          <ProductImage
                             src={deal.image}
                             alt={deal.name}
+                            category={deal.category}
                             className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
                           />
                           <span
@@ -973,7 +1095,7 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                   Shop Now, Checkout Smarter
                 </h2>
                 <p className="text-xs sm:text-sm text-[#7C877F] leading-relaxed">
-                  Explore live inventory in <strong className="text-[#0A2540]">{city}</strong> with instant city-level stock badges, typo-tolerant search, and zero-fail Smart Basket Rescue.
+                  Explore live inventory in <strong className="text-[#0A2540]">{city}</strong> with city stock badges and smart search.
                 </p>
               </div>
 
@@ -1072,32 +1194,48 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                 </button>
               </div>
 
-              {/* Typo-Tolerant Search Feedback Banner */}
+              {/* Smart Search Feedback Banner */}
               {debouncedSearch.trim() && (
                 <div className="rounded-2xl bg-[#EAF4EC] border border-[#C8E8D9] px-5 py-3 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 text-xs text-[#0A2540]">
-                    <Sparkles className="w-4 h-4 text-[#064E36]" />
-                    {typoCorrection ? (
-                      <span>
-                        Showing typo-tolerant results for{' '}
-                        <strong className="text-[#064E36]">“{typoCorrection}”</strong>{' '}
-                        (searched for <em>“{debouncedSearch}”</em>) —{' '}
-                        <strong>{filteredProducts.length}</strong> items found.
-                      </span>
-                    ) : (
-                      <span>
-                        Search results for{' '}
-                        <strong className="text-[#064E36]">“{debouncedSearch}”</strong>{' '}
-                        in <strong>{city}</strong> —{' '}
-                        <strong>{filteredProducts.length}</strong> items found.
-                      </span>
-                    )}
+                  <div className="flex items-start gap-2 text-xs text-[#0A2540]">
+                    <Sparkles className="w-4 h-4 text-[#064E36] shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <p>
+                        {typoCorrection ? (
+                          <>
+                            Smart search corrected <em>“{debouncedSearch}”</em> →{' '}
+                            <strong className="text-[#064E36]">“{typoCorrection}”</strong>
+                          </>
+                        ) : (
+                          <>
+                            Smart search for{' '}
+                            <strong className="text-[#064E36]">“{debouncedSearch}”</strong> in{' '}
+                            <strong>{city}</strong>
+                          </>
+                        )}{' '}
+                        — <strong>{filteredProducts.length}</strong> results ·{' '}
+                        <span className="uppercase text-[10px] font-bold">{searchMode}</span>
+                      </p>
+                      {soldOutCount > 0 && (
+                        <p className="text-[11px] text-[#7A5800] font-semibold">
+                          First-come stock: {soldOutCount} exact match
+                          {soldOutCount === 1 ? ' is' : 'es are'} sold out
+                          {alternativeCount > 0
+                            ? ` — showing ${alternativeCount} live alternative${alternativeCount === 1 ? '' : 's'} still available.`
+                            : '.'}
+                        </p>
+                      )}
+                    </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => {
                       setRawSearch('');
                       setDebouncedSearch('');
+                      setSmartHits(null);
+                      setSmartHitMeta(null);
+                      setSoldOutCount(0);
+                      setAlternativeCount(0);
                     }}
                     className="text-xs font-extrabold text-[#064E36] hover:underline cursor-pointer"
                   >
@@ -1149,6 +1287,7 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                     const cityStock = product.cityStock[city] ?? 0;
                     const badge = getStockBadgeMeta(cityStock);
                     const liked = !!likedIds[product.id];
+                    const meta = hitMetaById.get(product.id);
 
                     return (
                       <motion.article
@@ -1160,7 +1299,13 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                           {/* Top Row inside Card: "Just in" on left + Heart & Stock Badge on right */}
                           <div className="flex items-center justify-between gap-2 mb-2 px-1">
                             <span className="text-xs font-extrabold text-[#D97706]">
-                              {product.isJustIn ? 'Just in' : product.brand}
+                              {meta?.reason === 'alternative'
+                                ? 'Smart alternative'
+                                : meta?.reason === 'sold_out'
+                                  ? 'Sold out'
+                                  : product.isJustIn
+                                    ? 'Just in'
+                                    : product.brand}
                             </span>
 
                             <div className="flex items-center gap-1.5">
@@ -1198,9 +1343,10 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                             onClick={() => handleOpenProductDetail(product)}
                             className="relative aspect-4/3 rounded-2xl bg-white border border-[#E8EBE7] p-4 mb-3.5 flex items-center justify-center overflow-hidden cursor-pointer"
                           >
-                            <img
+                            <ProductImage
                               src={product.image}
                               alt={product.name}
+                              category={product.category}
                               className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
                             />
                             <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded-md bg-[#FAF9F5]/90 border border-[#E8EBE7] text-[9px] font-bold text-[#7C877F]">
@@ -1334,15 +1480,16 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                 </div>
               )}
             </section>
+            </div>
           </div>
         )}
       </main>
 
       {/* ───────────────────────────────────────────────────────────────────
-          STOREFRONT FOOTER
+          STOREFRONT FOOTER — full width
       ─────────────────────────────────────────────────────────────────── */}
-      <footer className="bg-white border-t border-[#E8EBE7] py-6 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#7C877F]">
+      <footer className="w-full bg-white border-t border-[#E8EBE7] py-6 mt-auto">
+        <div className="w-full px-4 sm:px-8 lg:px-12 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#7C877F]">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-[#EAF4EC] border border-[#C8E8D9] p-1 flex items-center justify-center">
               <BrandLogo className="w-full h-full" />
@@ -1350,42 +1497,33 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
             <span className="font-display font-black text-[#0A2540]">
               Celerity Commerce
             </span>
-            <span>· Multi-City Smart Basket Rescue Engine</span>
+            <span>· Live merchant inventory across Bengaluru, Mumbai &amp; Delhi</span>
           </div>
 
           <div className="flex flex-wrap items-center gap-4">
             <button
               type="button"
               onClick={() => {
-                setScreen('pipeline_status');
+                setScreen('profile');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
               className="font-bold text-[#064E36] hover:underline cursor-pointer"
             >
-              PostgreSQL → Kafka → OpenSearch Status
+              Profile &amp; Security
             </button>
             <button
               type="button"
               onClick={() => {
-                clearStockOverrides();
                 refreshCatalogFromStore();
                 pushToast(
-                  'Demo Stock Restored',
-                  `All ${city} inventory counts reset to initial values.`,
+                  'Catalog refreshed',
+                  `Latest merchant inventory for ${city} Hub.`,
                   'city'
                 );
               }}
               className="inline-flex items-center gap-1 font-bold text-[#0A2540] hover:underline cursor-pointer"
             >
-              <RotateCcw className="w-3 h-3" />
-              Reset Demo Stock
-            </button>
-            <button
-              type="button"
-              onClick={onOpenMerchant}
-              className="font-bold text-[#0A2540] hover:underline cursor-pointer"
-            >
-              Merchant Admin →
+              Refresh store
             </button>
           </div>
         </div>
@@ -1403,11 +1541,8 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
         onUpdateQty={handleUpdateQty}
         onRemove={handleRemoveItem}
         onClear={() => setCart([])}
-        onProceedToCheckout={(withSimulatedConflict) => {
+        onProceedToCheckout={() => {
           setCartOpen(false);
-          if (withSimulatedConflict) {
-            setSimulateConflict(true);
-          }
           setScreen('checkout');
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}

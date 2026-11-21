@@ -4,9 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 127.0.0.1 --port 3001",
     "build": "tsc && vite build",
-    "preview": "vite preview",
+    "preview": "vite preview --host 127.0.0.1 --port 3001",
     "api": "tsx server/src/index.ts",
     "db:migrate": "tsx server/src/db/migrate.ts",
     "db:reindex": "tsx -e \"import { reindexAllFromPostgres } from './server/src/services/search.ts'; reindexAllFromPostgres().then(c=>{console.log('indexed',c);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})\"",

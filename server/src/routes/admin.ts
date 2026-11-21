@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
 import { asyncHandler, HttpError } from '../middleware/errors.js';
 import { getPool } from '../db/pool.js';
 import { adjustStock, getStoreIdByCity } from '../services/inventory.js';
@@ -24,8 +24,7 @@ const upload = multer({
 });
 
 export const adminRouter = Router();
-// Any signed-in user can use merchant admin (same dual-mode UX as before)
-adminRouter.use(requireAuth);
+adminRouter.use(requireAuth, requireRole('admin'));
 
 adminRouter.get(
   '/dashboard',

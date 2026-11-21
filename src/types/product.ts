@@ -4,6 +4,14 @@ export type StockStatus = 'in_stock' | 'low_stock' | 'out_of_stock';
 
 export type StoreLocation = 'Bangalore' | 'Mumbai' | 'Delhi' | 'Bengaluru' | 'All Locations';
 
+export interface PaymentDiscountOffer {
+  id: string;
+  method: 'Netbanking' | 'Credit Card' | 'Debit Card / EMI' | 'UPI';
+  bankName: string;
+  discountPct: number;
+  maxDiscountInr: number;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -16,6 +24,7 @@ export interface Product {
   description: string;
   supplierName?: string;
   supplierPhone?: string;
+  paymentOffers?: PaymentDiscountOffer[];
   createdAt: string;
   lastUpdated: string;
 }
@@ -30,8 +39,6 @@ export type MerchantTab =
   | 'orders'
   | 'deadstock'
   | 'suppliers'
-  | 'restock'
-  | 'notifications'
   | 'settings';
 
 export interface CategorySummary {

@@ -5,18 +5,25 @@ export default defineConfig({
   plugins: [react()],
   envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
   server: {
-    port: 3000,
+    port: 3001,
+    strictPort: true,
     host: true,
     watch: {
-      ignored: ['**/.agent/**', '**/agent/**', '**/.agents/**', '**/.claude/**', '**/.gemini/**']
-    }
+      ignored: [
+        '**/.agent/**',
+        '**/agent/**',
+        '**/.agents/**',
+        '**/.claude/**',
+        '**/.gemini/**',
+      ],
+    },
   },
   optimizeDeps: {
-    entries: ['index.html']
+    entries: ['index.html'],
   },
   build: {
     rollupOptions: {
-      input: 'index.html'
-    }
-  }
+      input: 'index.html',
+    },
+  },
 });

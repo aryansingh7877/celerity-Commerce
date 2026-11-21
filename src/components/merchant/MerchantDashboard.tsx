@@ -68,7 +68,7 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     );
   };
 
-  // ── 5. Add Product ──
+  // ── 5. Add Single Product ──
   const handleAddProduct = (newProd: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>) => {
     const created: Product = {
       ...newProd,
@@ -78,6 +78,18 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     };
     setProducts((prev) => [created, ...prev]);
     showToast(`Added "${created.name}" to inventory.`);
+  };
+
+  // ── 5b. Add Bulk Imported Products (from CSV / Excel / PDF) ──
+  const handleAddBulkProducts = (newProds: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>[]) => {
+    const createdList: Product[] = newProds.map((item, idx) => ({
+      ...item,
+      id: `prod-${Date.now().toString(36)}-${idx}`,
+      createdAt: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+    }));
+    setProducts((prev) => [...createdList, ...prev]);
+    showToast(`Successfully imported ${createdList.length} products to inventory.`);
   };
 
   // ── 6. Edit Product ──
@@ -243,6 +255,7 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onAddProduct={handleAddProduct}
+        onAddBulkProducts={handleAddBulkProducts}
       />
 
       <EditProductModal

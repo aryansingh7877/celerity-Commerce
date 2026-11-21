@@ -125,15 +125,15 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                     </td>
 
                     {/* SKU */}
-                    <td className="py-4 px-4">
-                      <span className="font-mono text-xs font-semibold px-2 py-1 rounded-md bg-[#FAF9F5] border border-[#E8EBE7] text-[#202A24]">
+                    <td className="py-4 px-4 whitespace-nowrap">
+                      <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-[#FAF9F5] border border-[#E8EBE7] text-[#202A24]">
                         {product.sku}
                       </span>
                     </td>
 
                     {/* Category */}
-                    <td className="py-4 px-4">
-                      <span className="inline-flex items-center text-xs font-medium text-[#202A24]">
+                    <td className="py-4 px-4 whitespace-nowrap">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-[#EAF4EC] text-[#064E36] border border-[#C8E8D9]">
                         {product.category}
                       </span>
                     </td>

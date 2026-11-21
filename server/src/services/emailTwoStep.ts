@@ -172,7 +172,9 @@ async function verifyLocalCode(userId: string, code: string) {
 
 /**
  * Send a 6-digit code to whatever email the user entered.
- * Prefer Resend/SMTP (works for any inbox). Fall back to Supabase Auth mailer.
+ * Prefer Resend/SMTP. If those fail (common with Resend test-from addresses),
+ * optionally print the code to the API console so any clone with the same .env can unlock.
+ * Last resort: Supabase Auth mailer.
  */
 export async function issueEmailTwoStepCode(userId: string, email: string) {
   const normalized = email.trim().toLowerCase();
@@ -182,12 +184,13 @@ export async function issueEmailTwoStepCode(userId: string, email: string) {
 
   const hasCustomMail =
     Boolean(env.RESEND_API_KEY) || Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
+  const consoleFallback = env.EMAIL_2FA_CONSOLE_FALLBACK !== false;
 
-  // Always mint our own 6-digit code when custom mail is available so any inbox works.
+  const code = String(randomInt(100000, 999999));
+  const errors: string[] = [];
+
   if (hasCustomMail) {
-    const code = String(randomInt(100000, 999999));
     await storeLocalCode(userId, code, 'local');
-    const errors: string[] = [];
     try {
       if (await sendViaResend(normalized, code)) {
         return { delivery: 'email' as const, channel: 'resend' as const };
@@ -202,8 +205,17 @@ export async function issueEmailTwoStepCode(userId: string, email: string) {
     } catch (err) {
       errors.push(err instanceof Error ? err.message : 'SMTP failed');
     }
-    // Custom mail configured but delivery failed — do not silently switch channels
-    // (would invalidate the stored local code). Surface the error.
+
+    // Shared-env / Resend sandbox: keep the same local code and surface it in the API log
+    // so every teammate using this .env can complete 2FA for any entered inbox.
+    if (consoleFallback) {
+      console.info(
+        `[email-2fa] Mail API could not deliver to ${normalized}. Dev code for this unlock: ${code}`
+      );
+      if (errors.length) console.info(`[email-2fa] providers: ${errors.join(' | ')}`);
+      return { delivery: 'console' as const, channel: 'console' as const };
+    }
+
     await getPool().query(`DELETE FROM email_2fa_codes WHERE user_id = $1`, [userId]);
     throw new Error(
       errors[0] ||
@@ -211,9 +223,20 @@ export async function issueEmailTwoStepCode(userId: string, email: string) {
     );
   }
 
-  await sendViaSupabaseAuth(normalized);
-  await storeLocalCode(userId, 'pending', 'supabase');
-  return { delivery: 'email' as const, channel: 'supabase' as const };
+  try {
+    await sendViaSupabaseAuth(normalized);
+    await storeLocalCode(userId, 'pending', 'supabase');
+    return { delivery: 'email' as const, channel: 'supabase' as const };
+  } catch (err) {
+    if (consoleFallback) {
+      await storeLocalCode(userId, code, 'local');
+      console.info(
+        `[email-2fa] Supabase mail failed for ${normalized}. Dev code for this unlock: ${code}`
+      );
+      return { delivery: 'console' as const, channel: 'console' as const };
+    }
+    throw err;
+  }
 }
 
 export async function verifyEmailTwoStepCode(

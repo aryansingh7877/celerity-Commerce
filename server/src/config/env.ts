@@ -65,6 +65,14 @@ const envSchema = z.object({
   SMTP_PORT: z.coerce.number().optional(),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
+  /** When mail APIs fail (e.g. Resend test-mode recipient limits), print the code in the API terminal so any teammate with the same .env can still unlock. Default: on. */
+  EMAIL_2FA_CONSOLE_FALLBACK: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === '') return true;
+      return v !== 'false' && v !== '0';
+    }),
 
   OUTBOX_POLL_MS: z.coerce.number().default(3000),
   OUTBOX_BATCH: z.coerce.number().default(20),

@@ -113,14 +113,20 @@ export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel
     setSending(true);
     setError(null);
     try {
-      const { error: sErr } = await sendEmailTwoStepCode(email);
+      const { error: sErr, channel } = await sendEmailTwoStepCode(email);
       if (sErr) {
         setError(sErr.message || 'Could not send email code.');
         setCodeSent(false);
         return;
       }
       setCodeSent(true);
-      setInfo(`Code sent to ${email}. Check inbox / spam.`);
+      if (channel === 'console') {
+        setInfo(
+          `Mail provider could not deliver to ${email}. Use the 6-digit code printed in the API terminal (shared .env / Resend test mode).`
+        );
+      } else {
+        setInfo(`Code sent to ${email}. Check inbox / spam.`);
+      }
     } finally {
       setSending(false);
     }

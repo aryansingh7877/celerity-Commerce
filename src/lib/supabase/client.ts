@@ -1,17 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl =
-  import.meta.env.NEXT_PUBLIC_SUPABASE_URL ||
-  import.meta.env.VITE_SUPABASE_URL ||
-  '';
+const supabaseUrl = 
+  import.meta.env.NEXT_PUBLIC_SUPABASE_URL || 
+  import.meta.env.VITE_SUPABASE_URL || 
+  'https://tmppdjjxjwakjnncxknm.supabase.co';
 
-const supabaseAnonKey =
-  import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  '';
+const supabaseAnonKey = 
+  import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 
+  import.meta.env.VITE_SUPABASE_ANON_KEY || 
+  'sb_publishable_3RPIXNt53IqsuKK8_a5ezA_q1khqiuA';
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase credentials missing from environment. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+  console.warn('⚠️ Supabase credentials missing from environment. Check .env.local');
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -27,8 +27,6 @@ export interface DatabaseProfile {
   id: string;
   full_name: string | null;
   email: string | null;
-  role?: 'customer' | 'admin';
-  preferred_city?: string | null;
   created_at: string;
   updated_at: string;
 }

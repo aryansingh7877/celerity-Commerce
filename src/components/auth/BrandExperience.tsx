@@ -9,6 +9,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import StippleFlow from '../originkit/stipple-flow';
+import { BrandLogo } from '../common/BrandLogo';
 
 const WORKFLOW_STEPS = [
   {
@@ -137,12 +138,9 @@ export const BrandExperience: React.FC = () => {
       {/* ── 4. Top Header & Brand Identity ── */}
       <div className="relative z-20 flex items-center justify-between gap-4">
         <div ref={brandPillRef} className="flex items-center gap-3">
-          {/* Logo Icon matching Reference 2 & Navbar */}
-          <div className="relative w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#65B99B] to-[#C8E8D9] flex items-center justify-center shadow-md shadow-[#5EAA84]/20 border border-white/60">
-            <ShoppingBag className="w-5 h-5 text-[#0A2540] stroke-[2.2]" />
-            <span className="absolute -left-1.5 top-3 w-2 h-0.5 bg-[#65B99B] rounded-full opacity-70"></span>
-            <span className="absolute -left-2.5 top-5 w-3.5 h-0.5 bg-[#65B99B] rounded-full opacity-90"></span>
-            <span className="absolute -left-1.5 top-7 w-2 h-0.5 bg-[#65B99B] rounded-full opacity-70"></span>
+          {/* Brand Logo */}
+          <div className="w-12 h-12 rounded-2xl bg-white/80 backdrop-blur-sm flex items-center justify-center shadow-md shadow-[#5EAA84]/20 border border-white/80 p-1.5">
+            <BrandLogo className="w-full h-full" />
           </div>
 
           <div className="flex flex-col">

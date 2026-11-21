@@ -13,12 +13,9 @@ import {
   ExternalLink,
   ChevronRight,
   ShieldCheck,
-  ClipboardList,
-  Truck,
-  Bell,
-  Archive,
 } from 'lucide-react';
 import { MerchantTab } from '../../../types/product';
+import { BrandLogo } from '../../common/BrandLogo';
 
 interface MerchantSidebarProps {
   currentTab: MerchantTab;
@@ -82,36 +79,6 @@ export const MerchantSidebar: React.FC<MerchantSidebarProps> = ({
       badge: '3 Hubs',
     },
     {
-      id: 'orders' as MerchantTab,
-      label: 'Orders',
-      icon: ClipboardList,
-      badge: null,
-    },
-    {
-      id: 'deadstock' as MerchantTab,
-      label: 'Dead Stock',
-      icon: Archive,
-      badge: null,
-    },
-    {
-      id: 'suppliers' as MerchantTab,
-      label: 'Suppliers',
-      icon: Truck,
-      badge: null,
-    },
-    {
-      id: 'restock' as MerchantTab,
-      label: 'Restock',
-      icon: Package,
-      badge: null,
-    },
-    {
-      id: 'notifications' as MerchantTab,
-      label: 'Notifications',
-      icon: Bell,
-      badge: null,
-    },
-    {
       id: 'settings' as MerchantTab,
       label: 'Settings',
       icon: Settings,
@@ -139,12 +106,9 @@ export const MerchantSidebar: React.FC<MerchantSidebarProps> = ({
         <div className="p-6 border-b border-[#E8EBE7] bg-white/60 backdrop-blur-sm">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {/* Brand Logo with Speed Trails */}
-              <div className="relative w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#65B99B] via-[#C8E8D9] to-[#E8D58A] flex items-center justify-center shadow-xs">
-                <ShoppingBag className="w-5 h-5 text-[#064E36] stroke-[2.2]" />
-                <span className="absolute -left-1.5 top-2.5 w-2 h-0.5 bg-[#064E36] rounded-full opacity-60"></span>
-                <span className="absolute -left-2.5 top-4.5 w-3.5 h-0.5 bg-[#064E36] rounded-full opacity-80"></span>
-                <span className="absolute -left-1.5 top-6.5 w-2 h-0.5 bg-[#064E36] rounded-full opacity-60"></span>
+              {/* Brand Logo */}
+              <div className="w-10 h-10 rounded-2xl bg-[#EAF4EC] border border-[#C8E8D9] p-1 flex items-center justify-center shadow-xs">
+                <BrandLogo className="w-full h-full" />
               </div>
               <div className="flex flex-col">
                 <span className="font-display font-black text-lg tracking-tight text-[#0A2540] leading-tight">

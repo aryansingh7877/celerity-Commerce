@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ShoppingBag, ArrowUpRight, MapPin, Sparkles, User, LogOut, LayoutDashboard, Boxes } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { BrandLogo } from './common/BrandLogo';
 
 interface NavbarProps {
   onOpenDemo?: () => void;
@@ -31,12 +32,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenDemo, onOpenMerchantDashbo
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
         {/* Brand Logo matching Reference 2 */}
         <a href="#" className="flex items-center gap-2.5 group">
-          <div className="relative w-9 h-9 rounded-xl bg-gradient-to-tr from-[#65B99B] to-[#C8E8D9] flex items-center justify-center shadow-sm transition-transform duration-300 group-hover:scale-105">
-            <ShoppingBag className="w-5 h-5 text-[#0A2540] stroke-[2.2]" />
-            {/* Speed trails mimicking Celerity icon */}
-            <span className="absolute -left-1.5 top-2.5 w-2 h-0.5 bg-[#65B99B] rounded-full opacity-60"></span>
-            <span className="absolute -left-2.5 top-4 w-3.5 h-0.5 bg-[#65B99B] rounded-full opacity-80"></span>
-            <span className="absolute -left-1.5 top-5.5 w-2 h-0.5 bg-[#65B99B] rounded-full opacity-60"></span>
+          <div className="w-10 h-10 rounded-xl bg-[#EAF4EC] border border-[#C8E8D9] p-1 flex items-center justify-center shadow-sm transition-transform duration-300 group-hover:scale-105">
+            <BrandLogo className="w-full h-full" />
           </div>
           <div className="flex flex-col">
             <span className="font-display font-extrabold text-lg sm:text-xl tracking-tight text-[#0A2540] leading-none">

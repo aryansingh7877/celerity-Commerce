@@ -16,11 +16,10 @@ type ApiProduct = {
 };
 
 function cityUi(city: string): Product['location'] {
-  if (city === 'Bengaluru') return 'Bengaluru';
+  if (city === 'Bengaluru' || city === 'Bangalore') return 'Bangalore';
   if (city === 'Mumbai') return 'Mumbai';
   if (city === 'Delhi') return 'Delhi';
-  if (city === 'Bangalore') return 'Bangalore';
-  return 'Bengaluru';
+  return 'Bangalore';
 }
 
 export function mapApiProducts(products: ApiProduct[]): Product[] {
@@ -35,7 +34,7 @@ export function mapApiProducts(products: ApiProduct[]): Product[] {
         category: p.category,
         price: Number(p.price),
         stock: 0,
-        location: 'Bengaluru',
+        location: 'Bangalore',
         image: p.image_url || '',
         description: p.description || '',
         createdAt: p.created_at || new Date().toISOString(),

@@ -3,12 +3,13 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { AuthPage } from './components/auth/AuthPage';
 import { MerchantDashboard } from './components/merchant/MerchantDashboard';
 import { CustomerStorefront } from './components/storefront/CustomerStorefront';
-import { ShoppingBag, Loader2 } from 'lucide-react';
+import { BrandLogo } from './components/common/BrandLogo';
+import { Loader2 } from 'lucide-react';
 
 const LoadingScreen: React.FC = () => (
   <div className="h-screen w-full bg-[#070A09] flex flex-col items-center justify-center text-white select-none">
-    <div className="relative w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#65B99B] to-[#C8E8D9] flex items-center justify-center shadow-lg shadow-[#65B99B]/25 mb-4 animate-pulse">
-      <ShoppingBag className="w-6 h-6 text-[#0A2540] stroke-[2.2]" />
+    <div className="relative w-14 h-14 rounded-2xl bg-[#DCEFE3]/15 border border-[#65B99B]/30 flex items-center justify-center shadow-lg shadow-[#65B99B]/20 mb-4 animate-pulse p-1.5">
+      <BrandLogo className="w-full h-full" />
     </div>
     <div className="flex items-center gap-2 text-xs font-mono tracking-widest text-[#65B99B] uppercase">
       <Loader2 className="w-3.5 h-3.5 animate-spin text-[#65B99B]" />
@@ -18,16 +19,14 @@ const LoadingScreen: React.FC = () => (
 );
 
 const AppContent: React.FC = () => {
-  const { user, session, profile, isLoading, signOut } = useAuth();
-  // Same dual-mode switch as before: any signed-in user can open Admin or Customer view
-  const [viewMode, setViewMode] = useState<'merchant' | 'storefront'>('merchant');
+  const { user, profile, isLoading, signOut } = useAuth();
+  const [viewMode, setViewMode] = useState<'merchant' | 'storefront'>('storefront');
 
   if (isLoading) {
     return <LoadingScreen />;
   }
 
-  // Require a real Supabase JWT — fake/local fallback users cannot call the API
-  if (!session?.access_token || !user) {
+  if (!user) {
     return <AuthPage />;
   }
 

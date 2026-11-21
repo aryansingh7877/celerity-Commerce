@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   AlertCircle,
@@ -86,21 +86,12 @@ export const StockManagementPage: React.FC<StockManagementPageProps> = ({
     return [...outOfStockProducts, ...lowStockProducts];
   }, [alertFilter, outOfStockProducts, lowStockProducts, deadStockWatch]);
 
-  // ── Time-of-day Greeting (updates live) ──
-  const [greeting, setGreeting] = useState(() => {
+  // ── Time-of-day Greeting ──
+  const greeting = useMemo(() => {
     const hr = new Date().getHours();
     if (hr < 12) return 'Good Morning';
     if (hr < 17) return 'Good Afternoon';
     return 'Good Evening';
-  });
-  useEffect(() => {
-    const tick = () => {
-      const hr = new Date().getHours();
-      setGreeting(hr < 12 ? 'Good Morning' : hr < 17 ? 'Good Afternoon' : 'Good Evening');
-    };
-    tick();
-    const id = setInterval(tick, 60_000);
-    return () => clearInterval(id);
   }, []);
 
   // ── Quick Insights Metrics ──

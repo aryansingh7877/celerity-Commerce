@@ -1,5 +1,6 @@
 import React from 'react';
 import { ShoppingBag, ArrowUpRight } from 'lucide-react';
+import { BrandLogo } from './common/BrandLogo';
 
 export const Footer: React.FC = () => {
   return (
@@ -23,8 +24,8 @@ export const Footer: React.FC = () => {
           {/* Brand Info */}
           <div className="lg:col-span-2">
             <a href="#" className="flex items-center gap-2.5 mb-6 group">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#65B99B] to-[#C8E8D9] flex items-center justify-center shadow-sm">
-                <ShoppingBag className="w-4 h-4 text-[#0A2540] stroke-[2.2]" />
+              <div className="w-9 h-9 rounded-xl bg-white/95 p-1 flex items-center justify-center shadow-sm">
+                <BrandLogo className="w-full h-full" />
               </div>
               <span className="font-display font-extrabold text-xl tracking-tight text-white">
                 Celerity<span className="font-normal text-[#65B99B] ml-1">Commerce</span>

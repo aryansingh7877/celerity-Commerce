@@ -1,0 +1,91 @@
+/* Aurora Ethereal & Celerity Design Tokens */
+:root {
+  /* Aurora Mesh Gradient Colors */
+  --aurora-mint-light: #C9EBD7;
+  --aurora-mint-base: #9ED7B7;
+  --aurora-mint-deep: #5EAA84;
+  --brand-emerald: #10A37F;
+  --solar-gold-light: #FDF4D4;
+  --solar-gold-base: #F5DE98;
+  --solar-gold-deep: #E5B842;
+  --mist-light: #EDF2F7;
+  --mist-base: #CBD3DC;
+  --mist-slate: #8F9CAE;
+
+  /* High Contrast Sapphire Anchor */
+  --sapphire-900: #07152B;
+  --sapphire-800: #0A2540;
+  --sapphire-600: #1A3B66;
+  --sapphire-400: #4A6B95;
+
+  /* Accents */
+  --accent-electric-lime: #E2F952;
+  --obsidian-950: #08090C;
+  --obsidian-900: #111319;
+}
+
+/* Base Mesh Background */
+.bg-aurora-mesh {
+  background-color: #E2ECF2;
+  background-image: 
+    radial-gradient(at 15% 20%, rgba(245, 222, 152, 0.75) 0px, transparent 55%),
+    radial-gradient(at 85% 15%, rgba(203, 211, 220, 0.85) 0px, transparent 50%),
+    radial-gradient(at 25% 85%, rgba(158, 215, 183, 0.85) 0px, transparent 60%),
+    radial-gradient(at 80% 80%, rgba(245, 222, 152, 0.60) 0px, transparent 55%),
+    radial-gradient(at 50% 50%, rgba(226, 236, 242, 0.50) 0px, transparent 70%);
+  background-attachment: fixed;
+}
+
+/* Glassmorphism Cards */
+.glass-card-sage {
+  background: rgba(158, 215, 183, 0.35);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 
+    0 20px 40px -15px rgba(94, 170, 132, 0.15),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.6);
+  border-radius: 28px;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease;
+}
+
+.glass-card-sage:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 24px 48px -15px rgba(94, 170, 132, 0.25);
+}
+
+.glass-card-gold {
+  background: rgba(245, 222, 152, 0.38);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 
+    0 20px 40px -15px rgba(229, 184, 66, 0.15),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.6);
+  border-radius: 28px;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease;
+}
+
+.glass-card-gold:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 24px 48px -15px rgba(229, 184, 66, 0.25);
+}
+
+.glass-card-white {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 16px 36px -12px rgba(10, 37, 64, 0.08);
+  border-radius: 26px;
+}
+
+/* Watermark typography */
+.text-watermark {
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.28);
+  text-transform: uppercase;
+  user-select: none;
+  pointer-events: none;
+}

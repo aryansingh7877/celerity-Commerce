@@ -9,8 +9,9 @@ import { enqueueOutbox } from '../services/outbox.js';
 import { importProductRows, parseCsvBuffer, parseExcelBuffer } from '../services/importProducts.js';
 import { indexProduct, deleteProductIndex, reindexAllFromPostgres } from '../services/search.js';
 import { env } from '../config/env.js';
-import { sendRestockWhatsApp, logNotification } from '../services/whatsapp.js';
-import { ollamaGenerate } from '../services/ollama.js';
+import { logNotification, whatsappTemplateStatus } from '../services/whatsapp.js';
+import { aiGenerate } from '../services/aiGateway.js';
+import { notifySupplierOnStockDepletion } from '../services/supplierNotify.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -168,10 +169,32 @@ adminRouter.get(
        FROM products p
        LEFT JOIN inventory i ON i.product_id = p.id
        LEFT JOIN stores s ON s.id = i.store_id
+       WHERE COALESCE(p.active, true) = true
        GROUP BY p.id
        ORDER BY p.updated_at DESC`
     );
     res.json({ products: result.rows });
+  })
+);
+
+/** Soft-deactivate entire catalog + drop OpenSearch docs (Clear Catalog). */
+adminRouter.post(
+  '/catalog/clear',
+  asyncHandler(async (_req, res) => {
+    const pool = getPool();
+    const ids = await pool.query<{ id: string }>(
+      `SELECT id FROM products WHERE COALESCE(active, true) = true`
+    );
+    if (ids.rows.length) {
+      await pool.query(
+        `UPDATE products SET active = false, updated_at = now()
+         WHERE COALESCE(active, true) = true`
+      );
+      for (const row of ids.rows) {
+        await deleteProductIndex(String(row.id)).catch(() => undefined);
+      }
+    }
+    res.json({ ok: true, cleared: ids.rows.length });
   })
 );
 
@@ -199,8 +222,8 @@ adminRouter.post(
     try {
       await client.query('BEGIN');
       const prod = await client.query(
-        `INSERT INTO products (sku, name, brand, category, description, price, offer_price, image_url, warranty)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        `INSERT INTO products (sku, name, brand, category, description, price, offer_price, image_url, warranty, active)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true)
          ON CONFLICT (sku) DO UPDATE SET
            name = EXCLUDED.name,
            brand = EXCLUDED.brand,
@@ -210,6 +233,7 @@ adminRouter.post(
            offer_price = EXCLUDED.offer_price,
            image_url = COALESCE(NULLIF(EXCLUDED.image_url, ''), products.image_url),
            warranty = COALESCE(EXCLUDED.warranty, products.warranty),
+           active = true,
            updated_at = now()
          RETURNING *`,
         [
@@ -412,17 +436,34 @@ adminRouter.post(
   '/dead-stock/explain',
   asyncHandler(async (req, res) => {
     const body = z.object({ summary: z.string().min(1) }).parse(req.body);
+    // Only explain text derived from Postgres dead-stock rows (client must pass that summary)
     const prompt = `You are an inventory analyst for an electronics retailer.
 Explain this dead-stock report in plain language and suggest concrete actions
 (discount, move hub, WhatsApp supplier, bundle). Do not invent numbers.
+Use only SKUs and figures present in the report below.
 
 ${body.summary}`;
-    const result = await ollamaGenerate(prompt);
+    const result = await aiGenerate(prompt);
     if (!result.ok) {
-      res.json({ explanation: null, error: result.error });
+      res.json({
+        explanation: null,
+        error: result.error,
+        attempts: result.attempts,
+      });
       return;
     }
-    res.json({ explanation: result.text, model: result.model });
+    res.json({
+      explanation: result.text,
+      model: result.model,
+      provider: result.provider,
+    });
+  })
+);
+
+adminRouter.get(
+  '/whatsapp/template-check',
+  asyncHandler(async (_req, res) => {
+    res.json(whatsappTemplateStatus());
   })
 );
 
@@ -571,7 +612,20 @@ adminRouter.get(
   asyncHandler(async (_req, res) => {
     const pool = getPool();
     const result = await pool.query(
-      `SELECT * FROM supplier_notification_logs ORDER BY created_at DESC LIMIT 200`
+      `SELECT
+         n.id, n.status, n.failure_reason, n.provider_message_id, n.provider_response, n.created_at,
+         n.restock_request_id, n.supplier_id,
+         p.sku, p.name AS product_name,
+         s.city,
+         sup.name AS supplier_name, sup.whatsapp_e164,
+         r.current_stock, r.whatsapp_status AS restock_whatsapp_status
+       FROM supplier_notification_logs n
+       LEFT JOIN restock_requests r ON r.id = n.restock_request_id
+       LEFT JOIN products p ON p.id = r.product_id
+       LEFT JOIN stores s ON s.id = r.store_id
+       LEFT JOIN suppliers sup ON COALESCE(n.supplier_id, r.supplier_id) = sup.id
+       ORDER BY n.created_at DESC
+       LIMIT 200`
     );
     res.json({ notifications: result.rows });
   })
@@ -581,69 +635,78 @@ adminRouter.post(
   '/notifications/:id/retry',
   asyncHandler(async (req, res) => {
     const pool = getPool();
-    const log = await pool.query(`SELECT * FROM supplier_notification_logs WHERE id = $1`, [
+    const log = await pool.query<{
+      id: string;
+      status: string;
+      restock_request_id: string | null;
+    }>(`SELECT id, status, restock_request_id FROM supplier_notification_logs WHERE id = $1`, [
       req.params.id,
     ]);
     if (!log.rows[0]) throw new HttpError(404, 'Notification not found');
+
+    // Safe retry: failed notifications only (not submitted/success)
+    const retryable = new Set(['failed', 'pending_configuration']);
+    if (!retryable.has(log.rows[0].status)) {
+      throw new HttpError(
+        400,
+        `Retry allowed only for failed/pending_configuration notifications (got ${log.rows[0].status})`
+      );
+    }
+
     const restockId = log.rows[0].restock_request_id;
     if (!restockId) throw new HttpError(400, 'No restock request linked');
-    const rr = await pool.query(
-      `SELECT r.*, p.name AS product_name, p.sku, s.city, sup.name AS supplier_name, sup.whatsapp_e164, sup.id AS supplier_id
+
+    const rr = await pool.query<{
+      product_id: string;
+      store_id: string;
+      current_stock: number;
+      reorder_threshold: number;
+      city: string;
+      supplier_id: string | null;
+      whatsapp_e164: string | null;
+    }>(
+      `SELECT r.product_id, r.store_id, r.current_stock, r.reorder_threshold, r.supplier_id,
+              s.city, sup.whatsapp_e164
        FROM restock_requests r
-       JOIN products p ON p.id = r.product_id
        JOIN stores s ON s.id = r.store_id
        LEFT JOIN suppliers sup ON sup.id = r.supplier_id
        WHERE r.id = $1`,
       [restockId]
     );
     const row = rr.rows[0];
-    if (!row?.whatsapp_e164) {
+    if (!row) throw new HttpError(404, 'Restock request not found');
+
+    if (!row.whatsapp_e164) {
       await logNotification({
         restockRequestId: restockId,
-        supplierId: row?.supplier_id,
+        supplierId: row.supplier_id ?? undefined,
         status: 'pending_configuration',
         failureReason: 'Supplier WhatsApp number missing',
       });
       res.json({ status: 'pending_configuration' });
       return;
     }
-    const result = await sendRestockWhatsApp({
-      toE164: row.whatsapp_e164,
-      supplierName: row.supplier_name ?? 'Supplier',
-      productName: row.product_name,
-      sku: row.sku,
+
+    const reason = row.current_stock === 0 ? 'out_of_stock' : 'low_stock';
+    const result = await notifySupplierOnStockDepletion({
+      productId: row.product_id,
+      storeId: row.store_id,
       city: row.city,
       stock: row.current_stock,
       reorderThreshold: row.reorder_threshold,
-      suggestedQty: row.suggested_qty,
+      reason,
+      forceSend: true,
     });
-    if (result.ok) {
-      await logNotification({
-        restockRequestId: restockId,
-        supplierId: row.supplier_id,
-        status: 'submitted',
-        providerMessageId: result.messageId,
-        providerResponse: result.response,
-      });
-      await pool.query(
-        `UPDATE restock_requests SET whatsapp_status = 'submitted', updated_at = now() WHERE id = $1`,
-        [restockId]
-      );
-      res.json({ status: 'submitted', messageId: result.messageId });
-    } else {
-      await logNotification({
-        restockRequestId: restockId,
-        supplierId: row.supplier_id,
-        status: result.status,
-        failureReason: result.reason,
-        providerResponse: result.response,
-      });
-      await pool.query(
-        `UPDATE restock_requests SET whatsapp_status = $2, updated_at = now() WHERE id = $1`,
-        [restockId, result.status]
-      );
-      res.json({ status: result.status, reason: result.reason });
+
+    if (result.notified) {
+      res.json({ status: 'submitted', messageId: result.messageId, restockId: result.restockId });
+      return;
     }
+    res.json({
+      status: 'status' in result ? result.status : 'failed',
+      reason: result.reason,
+      restockId: 'restockId' in result ? result.restockId : restockId,
+    });
   })
 );
 

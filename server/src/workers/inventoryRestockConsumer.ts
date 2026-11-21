@@ -1,7 +1,6 @@
 import { getPool } from '../db/pool.js';
 import { createConsumer, getKafkaTopic } from '../services/kafka.js';
-import { sendRestockWhatsApp, logNotification } from '../services/whatsapp.js';
-import { env } from '../config/env.js';
+import { notifySupplierOnStockDepletion } from '../services/supplierNotify.js';
 
 async function markProcessed(eventId: string) {
   await getPool().query(
@@ -32,11 +31,16 @@ async function handleLowStock(evt: {
   if (await alreadyProcessed(evt.event_id)) return;
   const pool = getPool();
 
-  const inv = await pool.query(
-    `SELECT i.*, s.city, p.name AS product_name, p.sku
+  const inv = await pool.query<{
+    product_id: string;
+    store_id: string;
+    stock: number;
+    reorder_threshold: number;
+    city: string;
+  }>(
+    `SELECT i.product_id, i.store_id, i.stock, i.reorder_threshold, s.city
      FROM inventory i
      JOIN stores s ON s.id = i.store_id
-     JOIN products p ON p.id = i.product_id
      WHERE i.product_id = $1 AND i.store_id = $2`,
     [evt.payload.product_id, evt.payload.store_id]
   );
@@ -52,111 +56,19 @@ async function handleLowStock(evt: {
     return;
   }
 
-  const suggested = Math.max(row.reorder_threshold * 2 - row.stock, row.reorder_threshold);
+  const reason = evt.event_type === 'inventory.out_of_stock' || row.stock === 0
+    ? 'out_of_stock'
+    : 'low_stock';
 
-  const supplier = await pool.query(
-    `SELECT s.* FROM product_suppliers ps
-     JOIN suppliers s ON s.id = ps.supplier_id
-     WHERE ps.product_id = $1
-     ORDER BY ps.is_primary DESC, s.created_at
-     LIMIT 1`,
-    [row.product_id]
-  );
-  const sup = supplier.rows[0] ?? null;
-
-  const existing = await pool.query(
-    `SELECT id FROM restock_requests WHERE product_id = $1 AND store_id = $2 AND status = 'open'`,
-    [row.product_id, row.store_id]
-  );
-
-  let restockId: string;
-  if (existing.rows[0]) {
-    restockId = existing.rows[0].id;
-    await pool.query(
-      `UPDATE restock_requests SET
-         current_stock = $2, reorder_threshold = $3, suggested_qty = $4,
-         supplier_id = COALESCE($5, supplier_id), updated_at = now()
-       WHERE id = $1`,
-      [restockId, row.stock, row.reorder_threshold, suggested, sup?.id ?? null]
-    );
-  } else {
-    const inserted = await pool.query(
-      `INSERT INTO restock_requests
-        (product_id, store_id, supplier_id, current_stock, reorder_threshold, suggested_qty, whatsapp_status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-      [
-        row.product_id,
-        row.store_id,
-        sup?.id ?? null,
-        row.stock,
-        row.reorder_threshold,
-        suggested,
-        env.hasWhatsApp ? 'pending' : 'pending_configuration',
-      ]
-    );
-    restockId = inserted.rows[0].id;
-    await pool.query(
-      `INSERT INTO outbox (event_type, entity_id, city, payload)
-       VALUES ('restock.requested', $1, $2, $3::jsonb)`,
-      [
-        restockId,
-        row.city,
-        JSON.stringify({ restock_request_id: restockId, product_id: row.product_id }),
-      ]
-    );
-  }
-
-  if (!sup?.whatsapp_e164) {
-    await logNotification({
-      restockRequestId: restockId,
-      supplierId: sup?.id,
-      status: 'pending_configuration',
-      failureReason: 'No supplier WhatsApp number',
-    });
-    await pool.query(
-      `UPDATE restock_requests SET whatsapp_status = 'pending_configuration' WHERE id = $1`,
-      [restockId]
-    );
-    await markProcessed(evt.event_id);
-    return;
-  }
-
-  const result = await sendRestockWhatsApp({
-    toE164: sup.whatsapp_e164,
-    supplierName: sup.name,
-    productName: row.product_name,
-    sku: row.sku,
+  // Shared path with API — DB lock prevents double WhatsApp
+  await notifySupplierOnStockDepletion({
+    productId: row.product_id,
+    storeId: row.store_id,
     city: row.city,
     stock: row.stock,
     reorderThreshold: row.reorder_threshold,
-    suggestedQty: suggested,
+    reason,
   });
-
-  if (result.ok) {
-    await logNotification({
-      restockRequestId: restockId,
-      supplierId: sup.id,
-      status: 'submitted',
-      providerMessageId: result.messageId,
-      providerResponse: result.response,
-    });
-    await pool.query(
-      `UPDATE restock_requests SET whatsapp_status = 'submitted', updated_at = now() WHERE id = $1`,
-      [restockId]
-    );
-  } else {
-    await logNotification({
-      restockRequestId: restockId,
-      supplierId: sup.id,
-      status: result.status,
-      failureReason: result.reason,
-      providerResponse: result.response,
-    });
-    await pool.query(
-      `UPDATE restock_requests SET whatsapp_status = $2, updated_at = now() WHERE id = $1`,
-      [restockId, result.status]
-    );
-  }
 
   await markProcessed(evt.event_id);
 }

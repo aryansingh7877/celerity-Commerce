@@ -16,10 +16,11 @@ type ApiProduct = {
 };
 
 function cityUi(city: string): Product['location'] {
-  if (city === 'Bengaluru' || city === 'Bangalore') return 'Bangalore';
+  if (city === 'Bengaluru') return 'Bengaluru';
   if (city === 'Mumbai') return 'Mumbai';
   if (city === 'Delhi') return 'Delhi';
-  return 'Bangalore';
+  if (city === 'Bangalore') return 'Bangalore';
+  return 'Bengaluru';
 }
 
 export function mapApiProducts(products: ApiProduct[]): Product[] {
@@ -34,7 +35,7 @@ export function mapApiProducts(products: ApiProduct[]): Product[] {
         category: p.category,
         price: Number(p.price),
         stock: 0,
-        location: 'Bangalore',
+        location: 'Bengaluru',
         image: p.image_url || '',
         description: p.description || '',
         createdAt: p.created_at || new Date().toISOString(),
@@ -103,6 +104,12 @@ export async function adjustAdminStock(rowId: string, location: string, newStock
 
 export async function deleteAdminProduct(rowId: string) {
   await api(`/api/admin/products/${productUuid(rowId)}`, { method: 'DELETE' });
+}
+
+export async function clearAdminCatalog() {
+  return api<{ ok: boolean; cleared: number }>('/api/admin/catalog/clear', {
+    method: 'POST',
+  });
 }
 
 export async function updateAdminProduct(product: Product) {

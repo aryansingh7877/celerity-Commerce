@@ -25,9 +25,8 @@ export const CategoriesPage: React.FC<CategoriesPageProps> = ({
   onEditProduct,
   onAdjustStock,
 }) => {
-  const categoryDefs = [
-    {
-      name: 'Headphones',
+  const defaultMeta: Record<string, { description: string; icon: typeof Package; themeColor: string; badgeBg: string; badgeText: string; borderHover: string }> = {
+    Headphones: {
       description: 'Over-ear and on-ear audiophile acoustic headsets with active noise cancellation.',
       icon: Headphones,
       themeColor: '#064E36',
@@ -35,8 +34,7 @@ export const CategoriesPage: React.FC<CategoriesPageProps> = ({
       badgeText: 'text-[#064E36]',
       borderHover: 'hover:border-[#064E36]/40',
     },
-    {
-      name: 'Earphones',
+    Earphones: {
       description: 'In-ear true wireless stereo earbuds and magnetic sport neckbands.',
       icon: Layers,
       themeColor: '#4E9A7F',
@@ -44,8 +42,7 @@ export const CategoriesPage: React.FC<CategoriesPageProps> = ({
       badgeText: 'text-[#103C2D]',
       borderHover: 'hover:border-[#4E9A7F]/40',
     },
-    {
-      name: 'Laptops',
+    Laptops: {
       description: 'High-performance computing, ultrabooks, and dedicated gaming rigs.',
       icon: Laptop,
       themeColor: '#103C2D',
@@ -53,8 +50,7 @@ export const CategoriesPage: React.FC<CategoriesPageProps> = ({
       badgeText: 'text-[#202A24]',
       borderHover: 'hover:border-[#E8D58A]',
     },
-    {
-      name: 'Smartphones',
+    Smartphones: {
       description: '5G cellular devices with multi-sensor camera arrays and OLED displays.',
       icon: Smartphone,
       themeColor: '#0A2540',
@@ -62,7 +58,30 @@ export const CategoriesPage: React.FC<CategoriesPageProps> = ({
       badgeText: 'text-[#0A2540]',
       borderHover: 'hover:border-[#0A2540]/40',
     },
+  };
+
+  const paletteCycle = [
+    { themeColor: '#064E36', badgeBg: 'bg-[#DCEFE3]', badgeText: 'text-[#064E36]', borderHover: 'hover:border-[#064E36]/40' },
+    { themeColor: '#4E9A7F', badgeBg: 'bg-[#EAF4EC]', badgeText: 'text-[#103C2D]', borderHover: 'hover:border-[#4E9A7F]/40' },
+    { themeColor: '#103C2D', badgeBg: 'bg-[#F5EBCB]', badgeText: 'text-[#202A24]', borderHover: 'hover:border-[#E8D58A]' },
+    { themeColor: '#0A2540', badgeBg: 'bg-[#E9E9D9]', badgeText: 'text-[#0A2540]', borderHover: 'hover:border-[#0A2540]/40' },
   ];
+
+  const uploadedCategories = Array.from(new Set(products.map((p) => p.category).filter(Boolean)));
+  const activeNames = uploadedCategories.length > 0 ? uploadedCategories : Object.keys(defaultMeta);
+
+  const categoryDefs = activeNames.map((name, idx) => {
+    const preset = defaultMeta[name];
+    if (preset) return { name, ...preset };
+    const style = paletteCycle[idx % paletteCycle.length];
+    const isLaptop = /(lap|gaming|ultrabook|convertible|student|business|workstation|entry|creator)/i.test(name);
+    return {
+      name,
+      description: `Imported catalog classification for ${name} SKUs across regional hubs.`,
+      icon: isLaptop ? Laptop : Package,
+      ...style,
+    };
+  });
 
   return (
     <div className="space-y-6">

@@ -4,6 +4,14 @@ import type { Product as StorefrontProduct, BasketItem } from '../data/products'
 const STORAGE_KEY = 'celerity_merchant_catalog_v1';
 export const CATALOG_UPDATED_EVENT = 'celerity-catalog-updated';
 
+function isCorruptedLegacyRow(p: MerchantProduct): boolean {
+  const name = (p.name || '').trim();
+  const desc = (p.description || '').trim();
+  if (/^(average\s*\/?\s*total|note:\s*columns|sku_id)$/i.test(name)) return true;
+  if (/^wm-\d+$/i.test(name) && /imported via document/i.test(desc)) return true;
+  return false;
+}
+
 export function loadCatalog(): MerchantProduct[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -11,9 +19,13 @@ export function loadCatalog(): MerchantProduct[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (p) => p && typeof p.id === 'string' && typeof p.name === 'string'
+    const valid = parsed.filter(
+      (p) => p && typeof p.id === 'string' && typeof p.name === 'string' && !isCorruptedLegacyRow(p)
     ) as MerchantProduct[];
+    if (valid.length !== parsed.length) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(valid));
+    }
+    return valid;
   } catch {
     return [];
   }

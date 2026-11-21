@@ -25,7 +25,10 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
   selectedLocation,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
-  const categories = ['All', 'Headphones', 'Earphones', 'Laptops', 'Smartphones'];
+  const categories = useMemo(() => {
+    const uniqueCats = Array.from(new Set(products.map((p) => p.category).filter(Boolean)));
+    return ['All', ...uniqueCats];
+  }, [products]);
 
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {

@@ -30,7 +30,7 @@ interface AddProductModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAddProduct: (product: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>) => void;
-  onAddBulkProducts?: (products: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>[]) => void;
+  onAddBulkProducts?: (products: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>[], replaceExisting?: boolean) => void;
   preferBulkMode?: boolean;
 }
 
@@ -62,6 +62,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [extractedProducts, setExtractedProducts] = useState<ParsedProductItem[]>([]);
+  const [replaceExistingOnBulk, setReplaceExistingOnBulk] = useState(true);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -197,7 +198,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     if (extractedProducts.length === 0) return;
 
     if (onAddBulkProducts) {
-      onAddBulkProducts(extractedProducts);
+      onAddBulkProducts(extractedProducts, replaceExistingOnBulk);
     } else {
       extractedProducts.forEach((item) => onAddProduct(item));
     }
@@ -613,17 +614,29 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 </div>
 
                 {/* Import Footer Actions */}
-                <div className="pt-3 border-t border-[#E8EBE7] flex items-center justify-between gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setExtractedProducts([]);
-                      setUploadedFile(null);
-                    }}
-                    className="text-xs font-semibold text-[#7C877F] hover:text-red-600 transition-colors cursor-pointer"
-                  >
-                    Clear File
-                  </button>
+                <div className="pt-3 border-t border-[#E8EBE7] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-4">
+                    <label className="inline-flex items-center gap-2 text-xs font-semibold text-[#202A24] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={replaceExistingOnBulk}
+                        onChange={(e) => setReplaceExistingOnBulk(e.target.checked)}
+                        className="rounded border-[#E8EBE7] accent-[#064E36]"
+                      />
+                      <span>Replace existing catalog</span>
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExtractedProducts([]);
+                        setUploadedFile(null);
+                      }}
+                      className="text-xs font-semibold text-[#7C877F] hover:text-red-600 transition-colors cursor-pointer"
+                    >
+                      Clear File
+                    </button>
+                  </div>
 
                   <div className="flex items-center gap-3">
                     <button

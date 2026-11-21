@@ -6,7 +6,12 @@ import { asyncHandler, HttpError } from '../middleware/errors.js';
 import { getPool } from '../db/pool.js';
 import { adjustStock, getStoreIdByCity } from '../services/inventory.js';
 import { enqueueOutbox } from '../services/outbox.js';
-import { importProductRows, parseCsvBuffer, parseExcelBuffer } from '../services/importProducts.js';
+import {
+  importProductRows,
+  parseCsvBuffer,
+  parseExcelBuffer,
+  upsertProductSupplier,
+} from '../services/importProducts.js';
 import { indexProduct, deleteProductIndex, reindexAllFromPostgres } from '../services/search.js';
 import { env } from '../config/env.js';
 import { logNotification, whatsappTemplateStatus } from '../services/whatsapp.js';
@@ -214,6 +219,8 @@ adminRouter.post(
         warranty: z.string().optional(),
         city: z.enum(['Bengaluru', 'Mumbai', 'Delhi', 'Bangalore']).default('Bengaluru'),
         stock: z.number().int().min(0).default(0),
+        supplierName: z.string().optional(),
+        supplierPhone: z.string().optional(),
       })
       .parse(req.body);
     const city = body.city === 'Bangalore' ? 'Bengaluru' : body.city;
@@ -258,6 +265,10 @@ adminRouter.post(
         adminId: req.user!.id,
         city,
       });
+      const supplierName = body.supplierName?.trim();
+      if (supplierName) {
+        await upsertProductSupplier(client, product.id, supplierName, body.supplierPhone?.trim());
+      }
       await enqueueOutbox(client, {
         eventType: 'product.created',
         entityId: product.id,

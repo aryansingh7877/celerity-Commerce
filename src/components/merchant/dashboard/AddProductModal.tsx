@@ -51,6 +51,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [price, setPrice] = useState<number | ''>(2499);
   const [stock, setStock] = useState<number | ''>(20);
   const [location, setLocation] = useState<'Bangalore' | 'Mumbai' | 'Delhi'>('Bangalore');
+  const [supplierName, setSupplierName] = useState('');
+  const [supplierPhone, setSupplierPhone] = useState('');
   const [image, setImage] = useState(
     'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=600&q=80'
   );
@@ -116,6 +118,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       location,
       image: image.trim(),
       description: description.trim() || `${name.trim()} - Premium commerce inventory.`,
+      supplierName: supplierName.trim() || undefined,
+      supplierPhone: supplierPhone.trim() || undefined,
     });
 
     onClose();
@@ -386,6 +390,33 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 <option value="Mumbai">Mumbai Central Logistics</option>
                 <option value="Delhi">Delhi NCR Hub</option>
               </select>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-[#202A24] mb-1.5">
+                  Supplier Name
+                </label>
+                <input
+                  type="text"
+                  value={supplierName}
+                  onChange={(e) => setSupplierName(e.target.value)}
+                  placeholder="e.g. Silicon Hub Distributors"
+                  className="w-full px-4 py-2.5 rounded-xl bg-[#FAF9F5] border border-[#E8EBE7] focus:bg-white focus:border-[#064E36] focus:ring-2 focus:ring-[#064E36]/15 outline-none text-sm text-[#202A24] placeholder-[#7C877F] transition-all"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-[#202A24] mb-1.5">
+                  Supplier Phone
+                </label>
+                <input
+                  type="tel"
+                  value={supplierPhone}
+                  onChange={(e) => setSupplierPhone(e.target.value)}
+                  placeholder="e.g. +919845512345"
+                  className="w-full px-4 py-2.5 rounded-xl bg-[#FAF9F5] border border-[#E8EBE7] focus:bg-white focus:border-[#064E36] focus:ring-2 focus:ring-[#064E36]/15 outline-none text-sm font-mono text-[#202A24] placeholder-[#7C877F] transition-all"
+                />
+              </div>
             </div>
 
             <div>

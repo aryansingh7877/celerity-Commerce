@@ -12,6 +12,7 @@ import { Product, MerchantTab } from '../../../types/product';
 import { StatsCards } from '../dashboard/StatsCards';
 import { CategoryDistributionChart } from '../dashboard/CategoryDistributionChart';
 import { InventoryTable } from '../dashboard/InventoryTable';
+import { useLiveGreeting } from '../../../lib/liveGreeting';
 
 interface OverviewPageProps {
   products: Product[];
@@ -32,6 +33,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   onAdjustStock,
   merchantName = 'Merchant',
 }) => {
+  const { greeting, clock } = useLiveGreeting();
   const lowStockItems = products.filter((p) => p.stock >= 1 && p.stock <= 10);
   const outOfStockItems = products.filter((p) => p.stock === 0);
   const totalStockUnits = products.reduce((acc, p) => acc + p.stock, 0);
@@ -44,10 +46,10 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#DCEFE3] text-[#064E36] text-[11px] font-extrabold uppercase tracking-wider mb-2">
             <Sparkles className="w-3.5 h-3.5 text-[#064E36]" />
-            Celerity Commerce • Merchant Central
+            Celerity Commerce • Merchant Central • {clock}
           </div>
           <h1 className="font-display font-extrabold text-2xl sm:text-3xl text-[#202A24] tracking-tight">
-            Good morning, {merchantName.split(' ')[0]}.
+            {greeting}, {merchantName.split(' ')[0]}.
           </h1>
           <p className="text-xs sm:text-sm text-[#7C877F] mt-1 font-medium">
             {isEmpty

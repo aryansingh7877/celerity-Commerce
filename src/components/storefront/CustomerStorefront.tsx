@@ -28,6 +28,7 @@ import {
   getSavedCity,
   saveSelectedCity,
   getUnifiedStorefrontCatalog,
+  fetchBackendStorefrontCatalog,
   resolveTypoCorrection,
   matchesTypoTolerantSearch,
   recordPipelineEvent,
@@ -144,6 +145,7 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
 
   // Polish: Loading skeletons & Toasts & Wishlist hearts
   const [isLoadingSkeleton, setIsLoadingSkeleton] = useState<boolean>(false);
+  const [searchMode, setSearchMode] = useState<string>('local');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [likedIds, setLikedIds] = useState<Record<string, boolean>>({});
   const catalogSectionRef = useRef<HTMLDivElement>(null);
@@ -160,14 +162,51 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
     }, 3400);
   };
 
-  // Sync catalog when merchant admin uploads an Excel sheet
-  const refreshCatalogFromStore = () => {
-    const fresh = getUnifiedStorefrontCatalog();
-    setCatalog(fresh);
+  // Sync catalog from local store AND live Express backend (/api/products or /api/search)
+  const refreshCatalogFromStore = async (
+    targetCity: CityName = city,
+    targetQuery: string = debouncedSearch
+  ) => {
+    const localItems = getUnifiedStorefrontCatalog();
+    // If this merchant has not uploaded any products yet, do not prefill from shared backend DB
+    if (localItems.length === 0) {
+      setSearchMode('local');
+      setCatalog([]);
+      setCart([]);
+      return;
+    }
+
+    const localSkuSet = new Set(localItems.map((p) => p.sku.toUpperCase()));
+    const backend = await fetchBackendStorefrontCatalog(targetCity, targetQuery);
+
+    let merged = localItems;
+    if (backend && backend.items.length > 0) {
+      const matchingBackend = backend.items.filter((p) =>
+        localSkuSet.has(p.sku.toUpperCase())
+      );
+      if (matchingBackend.length > 0) {
+        setSearchMode(backend.searchMode || 'postgres');
+        const seenSkus = new Set(matchingBackend.map((p) => p.sku.toUpperCase()));
+        merged = [
+          ...matchingBackend,
+          ...localItems.filter((p) => !seenSkus.has(p.sku.toUpperCase())),
+        ];
+      } else {
+        setSearchMode('local');
+      }
+    } else if (backend) {
+      setSearchMode(backend.searchMode || 'local');
+    } else {
+      setSearchMode('local');
+    }
+
+    setCatalog(merged);
     setCart((prev) =>
       prev
         .map((line) => {
-          const updated = fresh.find((p) => p.id === line.product.id);
+          const updated = merged.find(
+            (p) => p.id === line.product.id || p.sku === line.product.sku
+          );
           return updated ? { ...line, product: updated } : line;
         })
         .filter(Boolean)
@@ -175,13 +214,26 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
   };
 
   useEffect(() => {
-    window.addEventListener(CATALOG_UPDATED_EVENT, refreshCatalogFromStore);
-    window.addEventListener('storage', refreshCatalogFromStore);
-    return () => {
-      window.removeEventListener(CATALOG_UPDATED_EVENT, refreshCatalogFromStore);
-      window.removeEventListener('storage', refreshCatalogFromStore);
+    const onLocalRefresh = () => {
+      void refreshCatalogFromStore(city, debouncedSearch);
     };
-  }, []);
+    window.addEventListener(CATALOG_UPDATED_EVENT, onLocalRefresh);
+    window.addEventListener('storage', onLocalRefresh);
+    window.addEventListener('focus', onLocalRefresh);
+    return () => {
+      window.removeEventListener(CATALOG_UPDATED_EVENT, onLocalRefresh);
+      window.removeEventListener('storage', onLocalRefresh);
+      window.removeEventListener('focus', onLocalRefresh);
+    };
+  }, [city, debouncedSearch]);
+
+  useEffect(() => {
+    void refreshCatalogFromStore(city, debouncedSearch);
+    const poll = setInterval(() => {
+      void refreshCatalogFromStore(city, debouncedSearch);
+    }, 12_000);
+    return () => clearInterval(poll);
+  }, [city, debouncedSearch]);
 
   useEffect(() => {
     savePersistedCart(cart);
@@ -544,7 +596,12 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
                 Celerity
               </p>
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-[#064E36] mt-0.5">
-                {city} Store
+                {city} Store ·{' '}
+                {searchMode === 'opensearch'
+                  ? 'OpenSearch'
+                  : searchMode === 'postgres'
+                    ? 'Postgres Live'
+                    : 'Live Catalog'}
               </p>
             </div>
           </button>

@@ -17,6 +17,8 @@ export type ImportRow = {
   description?: string;
   imageUrl?: string;
   reorderThreshold?: number;
+  supplierName?: string;
+  supplierPhone?: string;
 };
 
 function normalizeCity(city: string): string {
@@ -77,7 +79,15 @@ function parseRow(
   const listPrice = parseMoney(mrpRaw) ?? price;
   const stockRaw = get('stock', 'quantity', 'qty');
   const stock = stockRaw ? Number(stockRaw.replace(/[^0-9]/g, '')) : 20;
-  const city = normalizeCity(get('city', 'location', 'hub') || 'Bengaluru');
+  const city = normalizeCity(get('city', 'location', 'hub', 'region', 'source', 'warehouse') || 'Bengaluru');
+  const supplierName = get('supplier_name', 'supplier', 'vendor');
+  const supplierPhone = get(
+    'supplier_phone',
+    'supplier_phone_number',
+    'whatsapp',
+    'whatsapp_e164',
+    'phone'
+  );
   const descriptionParts = [
     get('description'),
     get('series'),
@@ -116,8 +126,76 @@ function parseRow(
       description,
       imageUrl,
       reorderThreshold,
+      supplierName: supplierName || undefined,
+      supplierPhone: supplierPhone || undefined,
     },
   };
+}
+
+function normalizeWhatsapp(raw: string): string | null {
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.length === 10) return `+91${digits}`;
+  if (digits.startsWith('91') && digits.length === 12) return `+${digits}`;
+  if (raw.trim().startsWith('+') && digits.length >= 10) return `+${digits}`;
+  return digits.length >= 10 ? `+${digits}` : null;
+}
+
+export async function upsertProductSupplier(
+  client: { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> },
+  productId: string,
+  supplierName: string,
+  supplierPhone?: string
+) {
+  const phone = supplierPhone ? normalizeWhatsapp(supplierPhone) : null;
+  let supplierId: string | undefined;
+
+  if (phone) {
+    const byPhone = await client.query(
+      `SELECT id FROM suppliers WHERE whatsapp_e164 = $1 LIMIT 1`,
+      [phone]
+    );
+    supplierId = byPhone.rows[0]?.id as string | undefined;
+  }
+  if (!supplierId) {
+    const byName = await client.query(
+      `SELECT id FROM suppliers WHERE lower(name) = lower($1) LIMIT 1`,
+      [supplierName]
+    );
+    supplierId = byName.rows[0]?.id as string | undefined;
+  }
+  if (!supplierId) {
+    const created = await client.query(
+      `INSERT INTO suppliers (name, whatsapp_e164)
+       VALUES ($1, $2)
+       RETURNING id`,
+      [supplierName, phone]
+    );
+    supplierId = created.rows[0]?.id as string | undefined;
+  } else if (phone) {
+    await client.query(
+      `UPDATE suppliers SET
+         name = $2,
+         whatsapp_e164 = COALESCE($3, whatsapp_e164),
+         updated_at = now()
+       WHERE id = $1`,
+      [supplierId, supplierName, phone]
+    );
+  }
+
+  if (!supplierId) return;
+
+  await client.query(
+    `INSERT INTO product_suppliers (product_id, supplier_id, is_primary)
+     VALUES ($1, $2, true)
+     ON CONFLICT (product_id, supplier_id) DO UPDATE SET is_primary = true`,
+    [productId, supplierId]
+  );
+  await client.query(
+    `UPDATE product_suppliers SET is_primary = false
+     WHERE product_id = $1 AND supplier_id <> $2`,
+    [productId, supplierId]
+  );
 }
 
 export function parseCsvBuffer(buf: Buffer): Array<Record<string, unknown>> {
@@ -174,8 +252,8 @@ export async function importProductRows(
     for (const row of valid) {
       const storeId = await getStoreIdByCity(client, row.city);
       const prod = await client.query(
-        `INSERT INTO products (sku, name, brand, category, description, price, offer_price, image_url)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO products (sku, name, brand, category, description, price, offer_price, image_url, active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
          ON CONFLICT (sku) DO UPDATE SET
            name = EXCLUDED.name,
            brand = EXCLUDED.brand,
@@ -184,6 +262,7 @@ export async function importProductRows(
            price = EXCLUDED.price,
            offer_price = EXCLUDED.offer_price,
            image_url = COALESCE(NULLIF(EXCLUDED.image_url, ''), products.image_url),
+           active = true,
            updated_at = now()
          RETURNING *`,
         [
@@ -210,6 +289,9 @@ export async function importProductRows(
         adminId,
         city: row.city,
       });
+      if (row.supplierName) {
+        await upsertProductSupplier(client, product.id, row.supplierName, row.supplierPhone);
+      }
       if (row.reorderThreshold != null) {
         await client.query(
           `UPDATE inventory SET reorder_threshold = $3, updated_at = now()
@@ -240,8 +322,9 @@ export async function importProductRows(
           category: row.category,
           description: row.description,
           price: Number(row.offer_price ?? row.price),
+          imageUrl: row.image_url || '',
           specs: row.specs,
-          active: row.active,
+          active: row.active !== false,
         }).catch(() => undefined);
       }
     }

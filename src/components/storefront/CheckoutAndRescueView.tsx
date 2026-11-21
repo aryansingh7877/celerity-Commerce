@@ -24,7 +24,10 @@ import {
   getRescueAlternatives,
   saveStockOverride,
   recordPipelineEvent,
+  isUuid,
+  mapApiItemToMultiCity,
 } from '../../lib/storefrontCatalog';
+import { api, ApiError } from '../../lib/api';
 import { getStockBadgeMeta } from './ProductDetailView';
 
 export interface CartItemLine {
@@ -96,6 +99,9 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
   const [showWhyModal, setShowWhyModal] = useState<boolean>(true);
   const [forceEmptyAlternativesDemo, setForceEmptyAlternativesDemo] =
     useState<boolean>(false);
+  const [apiAlternativesByProduct, setApiAlternativesByProduct] = useState<
+    Record<string, (MultiCityProduct & { priceDelta: number })[]>
+  >({});
 
   const subtotal = cart.reduce(
     (sum, item) => sum + item.product.price * item.quantity,
@@ -117,7 +123,7 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
     return available >= line.quantity && available > 0;
   });
 
-  const handlePlaceOrder = () => {
+  const handlePlaceOrder = async () => {
     if (!customerName.trim() || !customerPhone.trim() || !customerAddress.trim()) {
       setFormError('Please fill in your name, phone number, and delivery address.');
       return;
@@ -130,6 +136,105 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
     setFormError(null);
     setIsPlacing(true);
 
+    // 1. Live Backend Checkout Path (for PostgreSQL UUID products when API + Auth token are active)
+    const allUuidLines = cart.every((l) => isUuid(l.product.id));
+    if (!simulateConflict && conflictedLines.length === 0 && allUuidLines) {
+      try {
+        const res = await api<{ order?: { id?: string; order_number?: string } }>(
+          '/api/orders',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              city,
+              lines: cart.map((l) => ({
+                productId: l.product.id,
+                quantity: l.quantity,
+              })),
+            }),
+          }
+        );
+
+        const cityCode =
+          city === 'Bengaluru' ? 'BLR' : city === 'Mumbai' ? 'BOM' : 'DEL';
+        const orderNum =
+          res.order?.order_number ||
+          res.order?.id?.slice(0, 8).toUpperCase() ||
+          `CEL-${cityCode}-${Math.floor(10000 + Math.random() * 89999)}`;
+
+        recordPipelineEvent({
+          service: 'PostgreSQL',
+          topic: 'checkout.committed',
+          city,
+          summary: `Live API Order ${orderNum} committed in PostgreSQL & queued in transactional outbox`,
+          status: 'COMMITTED',
+        });
+
+        setIsPlacing(false);
+        onRefreshCatalog();
+        onOrderSuccess({
+          orderNumber: orderNum,
+          city,
+          customerName: customerName.trim(),
+          customerPhone: customerPhone.trim(),
+          customerAddress: customerAddress.trim(),
+          items: [...cart],
+          totalAmount: subtotal,
+          placedAt: new Date().toLocaleTimeString('en-IN', {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+        });
+        return;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409) {
+          // Live HTTP 409 STOCK_CONFLICT from PostgreSQL FOR UPDATE lock -> fetch backend rescue suggestions
+          const firstConflict = cart[0];
+          saveStockOverride(firstConflict.product.id, city, 0);
+          try {
+            const sugRes = await api<{ alternatives?: Record<string, unknown>[] }>(
+              '/api/rescue/suggestions',
+              {
+                method: 'POST',
+                body: JSON.stringify({
+                  productId: firstConflict.product.id,
+                  city,
+                }),
+              }
+            );
+            if (Array.isArray(sugRes.alternatives) && sugRes.alternatives.length > 0) {
+              const mapped = sugRes.alternatives.map((raw) => {
+                const prod = mapApiItemToMultiCity(raw, city);
+                return {
+                  ...prod,
+                  priceDelta: prod.price - firstConflict.product.price,
+                };
+              });
+              setApiAlternativesByProduct((prev) => ({
+                ...prev,
+                [firstConflict.product.id]: mapped,
+              }));
+            }
+          } catch {
+            /* fall back to local getRescueAlternatives */
+          }
+
+          recordPipelineEvent({
+            service: 'PostgreSQL',
+            topic: 'checkout.conflict_409',
+            city,
+            summary: `Live HTTP 409 STOCK_CONFLICT from PostgreSQL for ${firstConflict.product.name} in ${city}`,
+            status: 'CONFLICT_409',
+          });
+          setIsPlacing(false);
+          onRefreshCatalog();
+          setMode('rescue');
+          return;
+        }
+        // If backend server is offline or unauthenticated (401), gracefully continue to local flow
+      }
+    }
+
+    // 2. Local / Demo Checkout & Conflict Simulation Path
     setTimeout(() => {
       setIsPlacing(false);
 
@@ -505,11 +610,11 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
         {/* Section 2: Conflicted Items & Up to 4 Alternatives */}
         {conflictedLines.length > 0 ? (
           conflictedLines.map((conflict) => {
-            const { alternatives, minPrice, maxPrice } = getRescueAlternatives(
-              conflict.product,
-              city,
-              catalog
-            );
+            const { alternatives: localAlts, minPrice, maxPrice } =
+              getRescueAlternatives(conflict.product, city, catalog);
+            const backendAlts = apiAlternativesByProduct[conflict.product.id];
+            const alternatives =
+              backendAlts && backendAlts.length > 0 ? backendAlts : localAlts;
             const displayedAlternatives = forceEmptyAlternativesDemo
               ? []
               : alternatives;
@@ -634,6 +739,18 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
                             <button
                               type="button"
                               onClick={() => {
+                                const swapQty = Math.min(conflict.quantity, altStock);
+                                if (isUuid(conflict.product.id) && isUuid(alt.id)) {
+                                  void api('/api/rescue/swap', {
+                                    method: 'POST',
+                                    body: JSON.stringify({
+                                      unavailableProductId: conflict.product.id,
+                                      replacementProductId: alt.id,
+                                      city,
+                                      quantity: swapQty,
+                                    }),
+                                  }).catch(() => undefined);
+                                }
                                 recordPipelineEvent({
                                   service: 'OpenSearch',
                                   topic: 'rescue.alternative_swapped',
@@ -644,7 +761,7 @@ export const CheckoutAndRescueView: React.FC<CheckoutAndRescueViewProps> = ({
                                 onReplaceItem(
                                   conflict.product.id,
                                   alt,
-                                  Math.min(conflict.quantity, altStock)
+                                  swapQty
                                 );
                               }}
                               className="mt-4 w-full py-2.5 px-4 rounded-full bg-[#064E36] hover:bg-[#103C2D] text-white text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer transition-all"

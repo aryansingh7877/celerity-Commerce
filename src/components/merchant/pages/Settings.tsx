@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Product } from '../../../types/product';
 import { BrandLogo } from '../../common/BrandLogo';
+import { FirewallTwoStep } from '../security/FirewallTwoStep';
 
 interface SettingsPageProps {
   merchantName?: string;
@@ -688,42 +689,30 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
           {/* ═══════════════════ TAB 3: SECURITY & ACCESS ═══════════════════ */}
           {activeSubTab === 'security' && (
-            <div className="rounded-2xl bg-white border border-[#E8EBE7] p-6 shadow-2xs space-y-5">
-              <div className="pb-4 border-b border-[#E8EBE7]">
-                <h2 className="font-display font-bold text-lg text-[#202A24]">
-                  Security &amp; Access Control
-                </h2>
-                <p className="text-xs text-[#7C877F] mt-0.5">
-                  Manage authentication protection and merchant admin session access.
-                </p>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-[#FAF9F5] border border-[#E8EBE7] flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs font-bold text-[#202A24]">Two-Factor Authentication (2FA)</p>
-                  <p className="text-[11px] text-[#7C877F] mt-0.5">
-                    Require verification before bulk inventory updates or hub configuration edits.
+            <div className="space-y-5">
+              <div className="rounded-2xl bg-white border border-[#E8EBE7] p-6 shadow-2xs space-y-5">
+                <div className="pb-4 border-b border-[#E8EBE7]">
+                  <h2 className="font-display font-bold text-lg text-[#202A24]">
+                    Security &amp; Access Control
+                  </h2>
+                  <p className="text-xs text-[#7C877F] mt-0.5">
+                    Configure Firewall Two-Factor Authentication (Authenticator App &amp; Email Codes) and session access.
                   </p>
                 </div>
-                <ToggleSwitch
-                  checked={settings.twoFactorEnabled}
-                  onChange={() =>
-                    handleToggle('twoFactorEnabled', 'Two-Factor Authentication')
-                  }
-                  label="Two-Factor Authentication"
-                />
-              </div>
 
-              <div className="p-4 rounded-2xl bg-[#EAF4EC]/60 border border-[#C8E8D9] flex items-center justify-between gap-4 text-xs">
-                <div>
-                  <p className="font-bold text-[#064E36]">Active Merchant Session</p>
-                  <p className="text-[#5E6D64] mt-0.5">
-                    Signed in as <strong>{settings.adminName}</strong> ({settings.email})
-                  </p>
+                <FirewallTwoStep />
+
+                <div className="p-4 rounded-2xl bg-[#EAF4EC]/60 border border-[#C8E8D9] flex items-center justify-between gap-4 text-xs">
+                  <div>
+                    <p className="font-bold text-[#064E36]">Active Merchant Session</p>
+                    <p className="text-[#5E6D64] mt-0.5">
+                      Signed in as <strong>{settings.adminName}</strong> ({settings.email})
+                    </p>
+                  </div>
+                  <span className="px-3 py-1 rounded-full bg-white border border-[#C8E8D9] text-[11px] font-bold text-[#064E36]">
+                    Verified Admin
+                  </span>
                 </div>
-                <span className="px-3 py-1 rounded-full bg-white border border-[#C8E8D9] text-[11px] font-bold text-[#064E36]">
-                  Verified Admin
-                </span>
               </div>
             </div>
           )}
@@ -851,7 +840,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     {
                       city: 'Bangalore' as const,
                       hub: 'Bangalore Primary Hub — Indiranagar (560038)',
-                      count: products.filter((p) => p.location === 'Bangalore').length,
+                      count: products.filter((p) => p.location === 'Bangalore' || p.location === 'Bengaluru').length,
                     },
                     {
                       city: 'Mumbai' as const,

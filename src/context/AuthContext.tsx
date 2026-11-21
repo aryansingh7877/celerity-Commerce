@@ -7,8 +7,14 @@ import {
   signOutUser, 
   sendPasswordReset, 
   getProfile,
-  updateProfile 
 } from '../lib/supabase/auth';
+import {
+  clearTwoStepPass,
+  needsTwoStepChallenge,
+  markTwoStepPassed,
+  isEmailAuthCallbackUrl,
+} from '../lib/supabase/mfa';
+import { api } from '../lib/api';
 
 interface AuthModalState {
   isOpen: boolean;
@@ -26,11 +32,13 @@ interface AuthContextType {
   closeAuthModal: () => void;
   openDashboard: () => void;
   closeDashboard: () => void;
-  signIn: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
+  signIn: (email: string, pass: string) => Promise<{ success: boolean; error?: string; needsMfa?: boolean }>;
   signUp: (email: string, pass: string, name: string) => Promise<{ success: boolean; error?: string }>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   refreshProfile: () => Promise<void>;
+  mfaPending: boolean;
+  completeMfa: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -45,35 +53,67 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isOpen: false,
     view: 'login',
   });
+  const [mfaPending, setMfaPending] = useState<boolean>(false);
 
-  // Fetch user profile on auth change
+  // Fetch user profile on auth change + best-effort Express /api/auth/me enrichment
   const loadProfile = async (currentUser: User | null) => {
     if (!currentUser) {
       setProfile(null);
       return;
     }
     const prof = await getProfile(currentUser.id);
-    if (prof) {
-      setProfile(prof);
-    } else {
-      // Fallback profile object from user metadata if database table not yet populated
+    const base: DatabaseProfile = prof ?? {
+      id: currentUser.id,
+      full_name: currentUser.user_metadata?.full_name || currentUser.email?.split('@')[0] || 'Customer',
+      email: currentUser.email || null,
+      role: 'customer',
+      created_at: currentUser.created_at,
+      updated_at: currentUser.created_at,
+    };
+
+    try {
+      const me = await api<{
+        user: {
+          id: string;
+          email: string | null;
+          fullName: string | null;
+          role: 'customer' | 'admin';
+          preferredCity: string | null;
+        };
+      }>('/api/auth/me');
       setProfile({
-        id: currentUser.id,
-        full_name: currentUser.user_metadata?.full_name || currentUser.email?.split('@')[0] || 'Customer',
-        email: currentUser.email || null,
-        created_at: currentUser.created_at,
-        updated_at: currentUser.created_at,
+        ...base,
+        full_name: me.user.fullName ?? base.full_name,
+        email: me.user.email ?? base.email,
+        role: me.user.role,
+        preferred_city: me.user.preferredCity,
       });
+    } catch {
+      setProfile({ ...base, role: base.role ?? 'customer' });
     }
   };
 
   useEffect(() => {
+    const emailLinkAtBoot = isEmailAuthCallbackUrl();
+
     // 1. Initial session check
-    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
+    supabase.auth.getSession().then(async ({ data: { session: currentSession } }) => {
       if (currentSession?.user) {
+        if (emailLinkAtBoot) {
+          markTwoStepPassed(currentSession.user.id);
+          try {
+            window.history.replaceState({}, '', window.location.pathname + window.location.search);
+          } catch {}
+        }
         setSession(currentSession);
         setUser(currentSession.user);
-        loadProfile(currentSession.user);
+        try {
+          const status = await needsTwoStepChallenge(currentSession.user.id);
+          setMfaPending(status.needs);
+        } catch {
+          setMfaPending(false);
+        }
+        await loadProfile(currentSession.user);
       } else {
         try {
           const savedFallback = localStorage.getItem('celerity_fallback_user');
@@ -89,22 +129,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(false);
     });
 
-    // 2. Listen to active auth events
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
-      if (currentSession?.user) {
-        setSession(currentSession);
-        setUser(currentSession.user);
-        await loadProfile(currentSession.user);
-      } else if (event === 'SIGNED_OUT') {
-        try {
-          localStorage.removeItem('celerity_fallback_user');
-        } catch {}
-        setSession(null);
-        setUser(null);
-        setProfile(null);
-        setIsDashboardOpen(false);
-      }
-      setIsLoading(false);
+    // 2. Listen to active auth events (deferred outside callback to prevent supabase-js lock deadlocks)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, currentSession) => {
+      setTimeout(async () => {
+        if (currentSession?.user) {
+          if (emailLinkAtBoot && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')) {
+            markTwoStepPassed(currentSession.user.id);
+          }
+          setSession(currentSession);
+          setUser(currentSession.user);
+          try {
+            const status = await needsTwoStepChallenge(currentSession.user.id);
+            setMfaPending(status.needs);
+          } catch {
+            setMfaPending(false);
+          }
+          await loadProfile(currentSession.user);
+        } else if (event === 'SIGNED_OUT') {
+          try {
+            localStorage.removeItem('celerity_fallback_user');
+          } catch {}
+          clearTwoStepPass();
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          setMfaPending(false);
+          setIsDashboardOpen(false);
+        }
+        setIsLoading(false);
+      }, 0);
     });
 
     return () => {
@@ -166,8 +219,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return { success: false, error: res.error.message };
     }
+    if (res.user) {
+      try {
+        const status = await needsTwoStepChallenge(res.user.id);
+        if (status.needs) {
+          setMfaPending(true);
+          closeAuthModal();
+          return { success: true, needsMfa: true };
+        }
+      } catch {}
+    }
+    setMfaPending(false);
     closeAuthModal();
     return { success: true };
+  };
+
+  const completeMfa = async () => {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.user?.id) {
+      markTwoStepPassed(data.session.user.id);
+      setSession(data.session);
+      setUser(data.session.user);
+      await loadProfile(data.session.user);
+    }
+    setMfaPending(false);
   };
 
   const signUp = async (email: string, pass: string, name: string) => {
@@ -261,10 +336,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       localStorage.removeItem('celerity_fallback_user');
     } catch {}
+    clearTwoStepPass();
     await signOutUser();
     setUser(null);
     setSession(null);
     setProfile(null);
+    setMfaPending(false);
     setIsDashboardOpen(false);
   };
 
@@ -300,6 +377,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signOut,
         resetPassword,
         refreshProfile,
+        mfaPending,
+        completeMfa,
       }}
     >
       {children}

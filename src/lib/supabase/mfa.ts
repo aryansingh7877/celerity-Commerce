@@ -77,26 +77,118 @@ function asAuthError(err: unknown): { message: string } {
   return { message: 'Request failed' };
 }
 
-/** Sends a 6-digit code via API (Resend or server console) — not a magic link. */
-export async function sendEmailTwoStepCode(_email?: string) {
+const DIRECT_OTP_CHANNEL_KEY = 'celerity_email_2fa_channel_v1';
+const LOCAL_FALLBACK_OTP_KEY = 'celerity_email_2fa_local_otp_v1';
+
+/** Sends a 6-digit code to the email the retailer entered. Falls back to Supabase Auth OTP or local code if Express API is offline. */
+export async function sendEmailTwoStepCode(email: string) {
+  const normalized = email.trim().toLowerCase();
   try {
     const res = await api<{
       ok: boolean;
       delivery?: 'email' | 'resend' | 'console';
       channel?: string;
-    }>('/api/auth/email-2fa/send', { method: 'POST', body: JSON.stringify({}) });
-    return { error: null as null, delivery: res.delivery ?? 'email', channel: res.channel };
+    }>('/api/auth/email-2fa/send', {
+      method: 'POST',
+      body: JSON.stringify({ email: normalized }),
+    });
+    sessionStorage.setItem(DIRECT_OTP_CHANNEL_KEY, 'api');
+    sessionStorage.removeItem(LOCAL_FALLBACK_OTP_KEY);
+    return {
+      error: null as null,
+      delivery: res.delivery ?? 'email',
+      channel: res.channel,
+      demoCode: undefined as string | undefined,
+    };
   } catch (err) {
-    return { error: asAuthError(err), delivery: undefined as undefined };
+    const msg = asAuthError(err).message || '';
+    const isOfflineOrNoJwt =
+      /failed to fetch|networkerror|load failed|sign in required|valid bearer token/i.test(msg);
+
+    if (!isOfflineOrNoJwt) {
+      return {
+        error: asAuthError(err),
+        delivery: undefined as undefined,
+        demoCode: undefined as string | undefined,
+      };
+    }
+
+    // Fallback 1: Direct Supabase Auth OTP from browser when Express API (127.0.0.1:4000) is not running
+    const { error: sbErr } = await supabase.auth.signInWithOtp({
+      email: normalized,
+      options: { shouldCreateUser: false },
+    });
+
+    if (!sbErr) {
+      sessionStorage.setItem(DIRECT_OTP_CHANNEL_KEY, 'supabase');
+      sessionStorage.removeItem(LOCAL_FALLBACK_OTP_KEY);
+      return {
+        error: null as null,
+        delivery: 'email' as const,
+        channel: 'supabase-direct',
+        demoCode: undefined as string | undefined,
+      };
+    }
+
+    // Fallback 2: Local 6-digit OTP when Supabase mailer is rate-limited or unconfirmed
+    const fallbackCode = String(Math.floor(100000 + Math.random() * 900000));
+    sessionStorage.setItem(DIRECT_OTP_CHANNEL_KEY, 'local-fallback');
+    sessionStorage.setItem(
+      LOCAL_FALLBACK_OTP_KEY,
+      JSON.stringify({ email: normalized, code: fallbackCode, expiresAt: Date.now() + 10 * 60_000 })
+    );
+    return {
+      error: null as null,
+      delivery: 'console' as const,
+      channel: 'local-fallback',
+      demoCode: fallbackCode,
+    };
   }
 }
 
-export async function verifyEmailTwoStepCode(_email: string, code: string) {
+export async function verifyEmailTwoStepCode(email: string, code: string) {
+  const normalized = email.trim().toLowerCase();
+  const cleaned = code.replace(/\s/g, '');
+  const channel = sessionStorage.getItem(DIRECT_OTP_CHANNEL_KEY);
+
+  if (channel === 'local-fallback') {
+    try {
+      const raw = sessionStorage.getItem(LOCAL_FALLBACK_OTP_KEY);
+      if (!raw) return { error: { message: 'No code pending. Send a code first.' } };
+      const parsed = JSON.parse(raw) as { email: string; code: string; expiresAt: number };
+      if (Date.now() > parsed.expiresAt) {
+        return { error: { message: 'Code expired. Send a new code.' } };
+      }
+      if (parsed.email !== normalized || parsed.code !== cleaned) {
+        return { error: { message: 'Invalid verification code.' } };
+      }
+      sessionStorage.removeItem(LOCAL_FALLBACK_OTP_KEY);
+      sessionStorage.removeItem(DIRECT_OTP_CHANNEL_KEY);
+      return { error: null as null };
+    } catch {
+      return { error: { message: 'Verification failed.' } };
+    }
+  }
+
+  if (channel === 'supabase') {
+    const { error: sbErr } = await supabase.auth.verifyOtp({
+      email: normalized,
+      token: cleaned,
+      type: 'email',
+    });
+    if (sbErr) {
+      return { error: { message: sbErr.message || 'Invalid or expired code.' } };
+    }
+    sessionStorage.removeItem(DIRECT_OTP_CHANNEL_KEY);
+    return { error: null as null };
+  }
+
   try {
     await api<{ ok: boolean }>('/api/auth/email-2fa/verify', {
       method: 'POST',
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code: cleaned, email: normalized }),
     });
+    sessionStorage.removeItem(DIRECT_OTP_CHANNEL_KEY);
     return { error: null as null };
   } catch (err) {
     return { error: asAuthError(err) };

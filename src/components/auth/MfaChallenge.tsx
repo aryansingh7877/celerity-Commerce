@@ -19,18 +19,19 @@ interface MfaChallengeProps {
 
 export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel }) => {
   const { user } = useAuth();
-  const email = user?.email || '';
 
   const [loading, setLoading] = useState(true);
   const [method, setMethod] = useState<TwoStepMethod>('email');
   const [canEmail, setCanEmail] = useState(false);
   const [canTotp, setCanTotp] = useState(false);
 
+  const [emailInput, setEmailInput] = useState('');
+  const [codeSent, setCodeSent] = useState(false);
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [resending, setResending] = useState(false);
+  const [sending, setSending] = useState(false);
 
   const [factorId, setFactorId] = useState<string | null>(null);
   const [challengeId, setChallengeId] = useState<string | null>(null);
@@ -46,6 +47,7 @@ export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel
       if (cancelled) return;
       setCanEmail(avail.email);
       setCanTotp(avail.totp);
+      setEmailInput(user.email || '');
       const initial: TwoStepMethod = avail.totp ? 'totp' : 'email';
       setMethod(avail.email || avail.totp ? initial : 'email');
       setLoading(false);
@@ -53,9 +55,9 @@ export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel
     return () => {
       cancelled = true;
     };
-  }, [user?.id]);
+  }, [user?.id, user?.email]);
 
-  // Prepare method-specific challenge
+  // Prepare TOTP only — email waits until retailer enters address and taps Send
   useEffect(() => {
     let cancelled = false;
     setCode('');
@@ -63,18 +65,12 @@ export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel
     setInfo(null);
     setFactorId(null);
     setChallengeId(null);
+    setCodeSent(false);
 
     (async () => {
       if (loading || !user?.id) return;
-      if (method === 'email' && canEmail && email) {
-        setInfo(`Sending a 6-digit code to ${email}…`);
-        const { error: sErr } = await sendEmailTwoStepCode(email);
-        if (cancelled) return;
-        if (sErr) {
-          setError(sErr.message || 'Could not send email code.');
-        } else {
-          setInfo(`6-digit code sent to ${email}. Check inbox / spam.`);
-        }
+      if (method === 'email' && canEmail) {
+        setInfo('Enter any email address to receive a 6-digit code, then tap Send code.');
         return;
       }
       if (method === 'totp' && canTotp) {
@@ -99,7 +95,7 @@ export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel
     return () => {
       cancelled = true;
     };
-  }, [method, canEmail, canTotp, email, loading, user?.id]);
+  }, [method, canEmail, canTotp, loading, user?.id]);
 
   const methods = useMemo(() => {
     const list: Array<{ id: TwoStepMethod; label: string; icon: typeof Mail }> = [];
@@ -108,8 +104,45 @@ export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel
     return list;
   }, [canEmail, canTotp]);
 
+  const sendCode = async () => {
+    const email = emailInput.trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      setError('Enter a valid email address.');
+      return;
+    }
+    setSending(true);
+    setError(null);
+    try {
+      const { error: sErr, channel, demoCode } = await sendEmailTwoStepCode(email);
+      if (sErr) {
+        setError(sErr.message || 'Could not send email code.');
+        setCodeSent(false);
+        return;
+      }
+      setCodeSent(true);
+      if (demoCode) {
+        setInfo(
+          `Express API / mailer offline — use local verification code: ${demoCode}`
+        );
+      } else if (channel === 'console') {
+        setInfo(
+          `Mail provider could not deliver to ${email}. Use the 6-digit code printed in the API terminal (shared .env / Resend test mode).`
+        );
+      } else {
+        setInfo(`Code sent to ${email}. Check inbox / spam.`);
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (method === 'email' && !codeSent) {
+      await sendCode();
+      return;
+    }
+
     const token = code.replace(/\s/g, '');
     if (!/^\d{6,8}$/.test(token)) {
       setError('Enter the verification code.');
@@ -119,8 +152,9 @@ export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel
     setError(null);
     try {
       if (method === 'email') {
+        const email = emailInput.trim().toLowerCase();
         if (!email) {
-          setError('Missing account email.');
+          setError('Enter your email address.');
           return;
         }
         const { error: vErr } = await verifyEmailTwoStepCode(email, token);
@@ -150,19 +184,6 @@ export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel
       setError(err instanceof Error ? err.message : 'Verification failed');
     } finally {
       setBusy(false);
-    }
-  };
-
-  const resendEmail = async () => {
-    if (!email) return;
-    setResending(true);
-    setError(null);
-    try {
-      const { error: sErr } = await sendEmailTwoStepCode(email);
-      if (sErr) setError(sErr.message || 'Could not resend code.');
-      else setInfo(`A new 6-digit code was sent to ${email}.`);
-    } finally {
-      setResending(false);
     }
   };
 
@@ -212,27 +233,50 @@ export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel
               <p className="text-xs text-[#064E36] leading-relaxed">
                 {info ||
                   (method === 'email'
-                    ? 'Enter the code from your email.'
+                    ? 'Enter your email to receive a 6-digit code.'
                     : 'Enter the code from your authenticator app.')}
               </p>
             </div>
 
             <form onSubmit={submit} className="space-y-4">
-              <label className="block">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#7C877F]">
-                  {method === 'email' ? 'Email code' : 'Authenticator code'}
-                </span>
-                <input
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={8}
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                  className="mt-1.5 w-full px-4 py-3 rounded-2xl border border-[#E8EBE7] bg-[#FAF9F5] text-center text-2xl font-black tracking-[0.35em] text-[#0A2540] outline-none focus:border-[#064E36] focus:ring-2 focus:ring-[#65B99B]/30"
-                  placeholder="••••••"
-                  autoFocus
-                />
-              </label>
+              {method === 'email' && (
+                <label className="block">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#7C877F]">
+                    Email address
+                  </span>
+                  <input
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={emailInput}
+                    onChange={(e) => {
+                      setEmailInput(e.target.value);
+                      setCodeSent(false);
+                    }}
+                    className="mt-1.5 w-full px-4 py-3 rounded-2xl border border-[#E8EBE7] bg-[#FAF9F5] text-sm font-semibold text-[#0A2540] outline-none focus:border-[#064E36] focus:ring-2 focus:ring-[#65B99B]/30"
+                    placeholder="you@business.com"
+                    autoFocus
+                  />
+                </label>
+              )}
+
+              {(method === 'totp' || codeSent) && (
+                <label className="block">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#7C877F]">
+                    {method === 'email' ? 'Email code' : 'Authenticator code'}
+                  </span>
+                  <input
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={8}
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                    className="mt-1.5 w-full px-4 py-3 rounded-2xl border border-[#E8EBE7] bg-[#FAF9F5] text-center text-2xl font-black tracking-[0.35em] text-[#0A2540] outline-none focus:border-[#064E36] focus:ring-2 focus:ring-[#65B99B]/30"
+                    placeholder="••••••"
+                    autoFocus={method === 'totp' || codeSent}
+                  />
+                </label>
+              )}
 
               {error && (
                 <div className="flex items-start gap-2 rounded-xl bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700">
@@ -241,30 +285,48 @@ export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel
                 </div>
               )}
 
-              <button
-                type="submit"
-                disabled={busy}
-                className="w-full inline-flex items-center justify-center gap-2 py-3 rounded-2xl bg-[#0A2540] hover:bg-[#064E36] text-white text-sm font-bold cursor-pointer disabled:opacity-60 transition-colors"
-              >
-                {busy ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" /> Verifying…
-                  </>
-                ) : (
-                  <>
-                    Unlock session <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
-              </button>
+              {method === 'email' && !codeSent ? (
+                <button
+                  type="submit"
+                  disabled={sending}
+                  className="w-full inline-flex items-center justify-center gap-2 py-3 rounded-2xl bg-[#0A2540] hover:bg-[#064E36] text-white text-sm font-bold cursor-pointer disabled:opacity-60 transition-colors"
+                >
+                  {sending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" /> Sending code…
+                    </>
+                  ) : (
+                    <>
+                      Send code <Mail className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="w-full inline-flex items-center justify-center gap-2 py-3 rounded-2xl bg-[#0A2540] hover:bg-[#064E36] text-white text-sm font-bold cursor-pointer disabled:opacity-60 transition-colors"
+                >
+                  {busy ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" /> Verifying…
+                    </>
+                  ) : (
+                    <>
+                      Unlock session <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              )}
 
-              {method === 'email' && (
+              {method === 'email' && codeSent && (
                 <button
                   type="button"
-                  onClick={() => void resendEmail()}
-                  disabled={resending}
+                  onClick={() => void sendCode()}
+                  disabled={sending}
                   className="w-full py-2.5 text-xs font-bold text-[#064E36] hover:underline cursor-pointer disabled:opacity-60"
                 >
-                  {resending ? 'Sending…' : 'Resend email code'}
+                  {sending ? 'Sending…' : 'Resend email code'}
                 </button>
               )}
 

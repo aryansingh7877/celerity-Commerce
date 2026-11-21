@@ -1,8 +1,33 @@
 import { Product as MerchantProduct } from '../types/product';
 import type { Product as StorefrontProduct, BasketItem } from '../data/products';
 
-const STORAGE_KEY = 'celerity_merchant_catalog_v1';
+const STORAGE_KEY_PREFIX = 'celerity_merchant_catalog_v2';
+const ACTIVE_SCOPE_KEY = 'celerity_active_merchant_scope_v1';
 export const CATALOG_UPDATED_EVENT = 'celerity-catalog-updated';
+
+function normalizeScope(scope?: string | null): string {
+  const s = (scope || '').trim().toLowerCase();
+  if (s) return s;
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem(ACTIVE_SCOPE_KEY);
+    if (saved && saved.trim()) return saved.trim().toLowerCase();
+  }
+  return 'anonymous';
+}
+
+function getStorageKey(scope?: string | null): string {
+  return `${STORAGE_KEY_PREFIX}:${normalizeScope(scope)}`;
+}
+
+export function setActiveMerchantScope(scope?: string | null): void {
+  if (typeof window === 'undefined') return;
+  const normalized = (scope || '').trim().toLowerCase();
+  if (normalized) {
+    localStorage.setItem(ACTIVE_SCOPE_KEY, normalized);
+  } else {
+    localStorage.removeItem(ACTIVE_SCOPE_KEY);
+  }
+}
 
 function isCorruptedLegacyRow(p: MerchantProduct): boolean {
   const name = (p.name || '').trim();
@@ -12,10 +37,12 @@ function isCorruptedLegacyRow(p: MerchantProduct): boolean {
   return false;
 }
 
-export function loadCatalog(): MerchantProduct[] {
+export function loadCatalog(scope?: string | null): MerchantProduct[] {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    if (scope) setActiveMerchantScope(scope);
+    const key = getStorageKey(scope);
+    const raw = localStorage.getItem(key);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -23,7 +50,7 @@ export function loadCatalog(): MerchantProduct[] {
       (p) => p && typeof p.id === 'string' && typeof p.name === 'string' && !isCorruptedLegacyRow(p)
     ) as MerchantProduct[];
     if (valid.length !== parsed.length) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(valid));
+      localStorage.setItem(key, JSON.stringify(valid));
     }
     return valid;
   } catch {
@@ -31,10 +58,15 @@ export function loadCatalog(): MerchantProduct[] {
   }
 }
 
-export function saveCatalog(products: MerchantProduct[]): { ok: boolean; error?: string } {
+export function saveCatalog(
+  products: MerchantProduct[],
+  scope?: string | null
+): { ok: boolean; error?: string } {
   if (typeof window === 'undefined') return { ok: false, error: 'No window' };
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
+    if (scope) setActiveMerchantScope(scope);
+    const key = getStorageKey(scope);
+    localStorage.setItem(key, JSON.stringify(products));
     window.dispatchEvent(new Event(CATALOG_UPDATED_EVENT));
     return { ok: true };
   } catch (err) {
@@ -48,9 +80,10 @@ export function saveCatalog(products: MerchantProduct[]): { ok: boolean; error?:
   }
 }
 
-export function clearCatalog(): void {
+export function clearCatalog(scope?: string | null): void {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(STORAGE_KEY);
+  const key = getStorageKey(scope);
+  localStorage.removeItem(key);
   window.dispatchEvent(new Event(CATALOG_UPDATED_EVENT));
 }
 

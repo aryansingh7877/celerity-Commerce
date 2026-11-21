@@ -78,6 +78,26 @@ export const MerchantTopbar: React.FC<MerchantTopbarProps> = ({
       title: 'Store Locations',
       subtitle: 'Bangalore, Mumbai & Delhi multi-hub distribution centers',
     },
+    orders: {
+      title: 'Orders',
+      subtitle: 'PostgreSQL transactional orders and fulfillment tracking',
+    },
+    deadstock: {
+      title: 'Dead Stock Analytics',
+      subtitle: 'Identify idle/overstocked SKUs, AI recommendations & liquidation offers',
+    },
+    suppliers: {
+      title: 'Suppliers',
+      subtitle: 'Manage distributor WhatsApp contacts for automated stockout alerts',
+    },
+    restock: {
+      title: 'Restock Requests',
+      subtitle: 'Automated restock requests triggered by low-stock Kafka consumers',
+    },
+    notifications: {
+      title: 'Supplier Notification Logs',
+      subtitle: 'Audit WhatsApp replenishment dispatches and retries',
+    },
     settings: {
       title: 'Merchant Settings',
       subtitle: 'Store configuration, alert thresholds & administrative profile',

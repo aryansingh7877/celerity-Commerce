@@ -64,7 +64,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
       setSku(product.sku);
       setPrice(product.price);
       setStock(product.stock);
-      setLocation(product.location);
+      setLocation(product.location === 'Bengaluru' ? 'Bangalore' : product.location);
       setDescription(product.description);
       setImageSlots(buildImageSlotsFromProduct(product));
       setActiveTab('details');

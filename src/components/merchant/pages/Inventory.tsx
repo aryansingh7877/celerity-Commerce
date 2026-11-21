@@ -78,8 +78,10 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     return products
       .filter((product) => {
         // Location filter
-        if (selectedLocation !== 'All Locations' && product.location !== selectedLocation) {
-          return false;
+        if (selectedLocation !== 'All Locations') {
+          const normProdLoc = product.location === 'Bengaluru' ? 'Bangalore' : product.location;
+          const normSelLoc = selectedLocation === 'Bengaluru' ? 'Bangalore' : selectedLocation;
+          if (normProdLoc !== normSelLoc) return false;
         }
 
         // Category filter

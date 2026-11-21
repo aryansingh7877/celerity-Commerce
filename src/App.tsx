@@ -4,6 +4,8 @@ import { AuthPage } from './components/auth/AuthPage';
 import { MerchantDashboard } from './components/merchant/MerchantDashboard';
 import { CustomerStorefront } from './components/storefront/CustomerStorefront';
 import { BrandLogo } from './components/common/BrandLogo';
+import { MfaChallenge } from './components/auth/MfaChallenge';
+import { setActiveMerchantScope } from './lib/merchantInventoryStore';
 import { Loader2 } from 'lucide-react';
 
 const LoadingScreen: React.FC = () => (
@@ -19,7 +21,7 @@ const LoadingScreen: React.FC = () => (
 );
 
 const AppContent: React.FC = () => {
-  const { user, profile, isLoading, signOut } = useAuth();
+  const { user, profile, isLoading, signOut, mfaPending, completeMfa } = useAuth();
   const [viewMode, setViewMode] = useState<'merchant' | 'storefront'>('storefront');
 
   if (isLoading) {
@@ -27,7 +29,23 @@ const AppContent: React.FC = () => {
   }
 
   if (!user) {
+    setActiveMerchantScope(null);
     return <AuthPage />;
+  }
+
+  setActiveMerchantScope(profile?.email || user.email || user.id);
+
+  if (mfaPending) {
+    return (
+      <MfaChallenge
+        onVerified={async () => {
+          await completeMfa();
+        }}
+        onCancel={async () => {
+          await signOut();
+        }}
+      />
+    );
   }
 
   if (viewMode === 'merchant') {

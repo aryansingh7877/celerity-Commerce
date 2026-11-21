@@ -9,6 +9,7 @@ export interface ParsedProductItem {
   price: number;
   stock: number;
   location: 'Bangalore' | 'Mumbai' | 'Delhi';
+  fileLocation?: 'Bangalore' | 'Mumbai' | 'Delhi';
   image: string;
   description: string;
   supplierName?: string;
@@ -74,6 +75,12 @@ const KNOWN_HEADER_KEYS = [
   'stock',
   'quantity',
   'qty',
+  'location',
+  'hub',
+  'city',
+  'warehouse',
+  'region',
+  'source',
   'description',
   'warranty',
   'processor',
@@ -148,11 +155,42 @@ function normalizeCategory(raw: string, hintText = ''): ProductCategory {
   return 'General Catalog';
 }
 
-function normalizeLocation(raw: string): 'Bangalore' | 'Mumbai' | 'Delhi' {
-  const t = (raw || '').toLowerCase();
-  if (t.includes('mumbai')) return 'Mumbai';
-  if (t.includes('delhi')) return 'Delhi';
-  return 'Bangalore';
+function normalizeLocation(
+  raw: string,
+  defaultLocation: 'Bangalore' | 'Mumbai' | 'Delhi' = 'Bangalore'
+): 'Bangalore' | 'Mumbai' | 'Delhi' {
+  const t = (raw || '').toLowerCase().trim();
+  if (
+    t.includes('mumbai') ||
+    t.includes('bom') ||
+    t.includes('bhiwandi') ||
+    t.includes('bombay') ||
+    t.includes('thane')
+  ) {
+    return 'Mumbai';
+  }
+  if (
+    t.includes('delhi') ||
+    t.includes('del') ||
+    t.includes('ncr') ||
+    t.includes('gurugram') ||
+    t.includes('gurgaon') ||
+    t.includes('noida') ||
+    t.includes('ghaziabad') ||
+    t.includes('faridabad')
+  ) {
+    return 'Delhi';
+  }
+  if (
+    t.includes('bangalore') ||
+    t.includes('bengaluru') ||
+    t.includes('blr') ||
+    t.includes('whitefield') ||
+    t.includes('karnataka')
+  ) {
+    return 'Bangalore';
+  }
+  return defaultLocation;
 }
 
 function cellStr(v: unknown): string {
@@ -360,7 +398,8 @@ function rowToProduct(
   row: unknown[],
   headers: string[],
   imageByRow: Map<number, string> | null,
-  sheetRowIndex: number
+  sheetRowIndex: number,
+  defaultLocation: 'Bangalore' | 'Mumbai' | 'Delhi' = 'Bangalore'
 ): ParsedProductItem | null {
   if (isNonProductRow(row)) return null;
 
@@ -373,15 +412,25 @@ function rowToProduct(
   const series = get('series', 'line');
   const modelName = get('modelname', 'model');
 
-  // Avoid letting 'modelname' satisfy the generic 'name' substring match so Brand + Series can be prepended cleanly
+  // Avoid letting 'modelname' or 'suppliername' satisfy the generic 'name' substring match
   const explicitNameIdx = (() => {
     const explicitKeys = ['productname', 'name', 'title', 'itemname', 'product', 'item'];
+    const excludedHeaders = new Set([
+      'modelname',
+      'model',
+      'suppliername',
+      'vendorname',
+      'distributorname',
+      'brandname',
+      'seriesname',
+      'companyname',
+    ]);
     for (const k of explicitKeys) {
       const idx = headers.findIndex((h) => h === k);
       if (idx >= 0) return idx;
     }
     for (const k of explicitKeys) {
-      const idx = headers.findIndex((h) => h !== 'modelname' && h !== 'model' && h.includes(k));
+      const idx = headers.findIndex((h) => !excludedHeaders.has(h) && !h.includes('supplier') && !h.includes('vendor') && h.includes(k));
       if (idx >= 0) return idx;
     }
     return -1;
@@ -423,7 +472,28 @@ function rowToProduct(
 
   const finalPrice = price > 0 ? price : 1999;
   const stock = parseStock(get('stock', 'quantity', 'qty', 'count', 'units'), 20);
-  const location = normalizeLocation(get('location', 'hub', 'city', 'warehouse'));
+  const rawLocation = get(
+    'region',
+    'location',
+    'hub',
+    'fulfillmenthub',
+    'city',
+    'warehouse',
+    'source',
+    'store',
+    'branch',
+    'storelocation',
+    'zone',
+    'depot',
+    'state',
+    'territory'
+  );
+  const hasLocationCol = Boolean(rawLocation && rawLocation.trim());
+  const fallbackHubs: Array<'Bangalore' | 'Mumbai' | 'Delhi'> = ['Bangalore', 'Mumbai', 'Delhi'];
+  const fallbackByRow = fallbackHubs[sheetRowIndex % fallbackHubs.length];
+  const location = hasLocationCol
+    ? normalizeLocation(rawLocation, fallbackByRow)
+    : fallbackByRow;
 
   const storage = get('storage', 'ssd', 'hdd');
   const display = get('display', 'screen');
@@ -475,6 +545,7 @@ function rowToProduct(
     price: finalPrice,
     stock,
     location,
+    fileLocation: location,
     image,
     description,
     supplierName: defaultSupplierName,
@@ -485,7 +556,10 @@ function rowToProduct(
 /**
  * Clean and parse CSV text into Product records
  */
-export function parseCSV(content: string): ParsedProductItem[] {
+export function parseCSV(
+  content: string,
+  defaultLocation: 'Bangalore' | 'Mumbai' | 'Delhi' = 'Bangalore'
+): ParsedProductItem[] {
   const lines = content
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -526,7 +600,7 @@ export function parseCSV(content: string): ParsedProductItem[] {
       break;
     }
 
-    const item = rowToProduct(row, headers, null, i);
+    const item = rowToProduct(row, headers, null, i, defaultLocation);
     if (item) parsedItems.push(item);
   }
 
@@ -536,13 +610,16 @@ export function parseCSV(content: string): ParsedProductItem[] {
 /**
  * Parse Excel (.xlsx / .xls) including embedded product images.
  */
-export async function parseExcel(file: File): Promise<ParsedProductItem[]> {
+export async function parseExcel(
+  file: File,
+  defaultLocation: 'Bangalore' | 'Mumbai' | 'Delhi' = 'Bangalore'
+): Promise<ParsedProductItem[]> {
   const buffer = await file.arrayBuffer();
   const imageByRow = await extractEmbeddedImagesByRow(file);
 
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
   const sheetName = workbook.SheetNames[0];
-  if (!sheetName) return getSampleExtractedProducts('Excel Worksheet Manifest');
+  if (!sheetName) return getSampleExtractedProducts('Excel Worksheet Manifest', defaultLocation);
 
   const sheet = workbook.Sheets[sheetName];
   const matrix = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
@@ -551,7 +628,7 @@ export async function parseExcel(file: File): Promise<ParsedProductItem[]> {
     raw: false,
   }) as unknown[][];
 
-  if (!matrix.length) return getSampleExtractedProducts('Excel Worksheet Manifest');
+  if (!matrix.length) return getSampleExtractedProducts('Excel Worksheet Manifest', defaultLocation);
 
   const headerIdx = findHeaderRowIndex(matrix);
   const headers = (matrix[headerIdx] || []).map((h) => normalizeHeader(cellStr(h)));
@@ -566,7 +643,7 @@ export async function parseExcel(file: File): Promise<ParsedProductItem[]> {
       break;
     }
 
-    const item = rowToProduct(row, headers, imageByRow, r);
+    const item = rowToProduct(row, headers, imageByRow, r, defaultLocation);
     if (item) items.push(item);
   }
 
@@ -576,20 +653,23 @@ export async function parseExcel(file: File): Promise<ParsedProductItem[]> {
   try {
     const text = await file.text();
     if (text.includes(',') || text.includes('\t')) {
-      const csvResults = parseCSV(text);
+      const csvResults = parseCSV(text, defaultLocation);
       if (csvResults.length > 0) return csvResults;
     }
   } catch {
     /* ignore */
   }
 
-  return getSampleExtractedProducts('Excel Worksheet Manifest');
+  return getSampleExtractedProducts('Excel Worksheet Manifest', defaultLocation);
 }
 
 /**
  * Parse PDF files by extracting text streams and invoice line items
  */
-export async function parsePDF(file: File): Promise<ParsedProductItem[]> {
+export async function parsePDF(
+  file: File,
+  defaultLocation: 'Bangalore' | 'Mumbai' | 'Delhi' = 'Bangalore'
+): Promise<ParsedProductItem[]> {
   try {
     const text = await file.text();
     const textTokenRegex = /\(([^)]+)\)\s*(?:Tj|'|")/g;
@@ -599,7 +679,7 @@ export async function parsePDF(file: File): Promise<ParsedProductItem[]> {
       if (match[1] && match[1].length > 1) tokens.push(match[1]);
     }
     if (tokens.length >= 4) {
-      const parsed = parseTokenStream(tokens);
+      const parsed = parseTokenStream(tokens, defaultLocation);
       if (parsed.length > 0) return parsed;
     }
 
@@ -612,16 +692,19 @@ export async function parsePDF(file: File): Promise<ParsedProductItem[]> {
     }
     const lines = extractedAscii.split('\n').filter((l) => l.trim().length > 3);
     if (lines.length >= 3) {
-      const csvAttempt = parseCSV(lines.join('\n'));
+      const csvAttempt = parseCSV(lines.join('\n'), defaultLocation);
       if (csvAttempt.length > 0) return csvAttempt;
     }
-    return getSampleExtractedProducts('PDF Invoice / Purchase Order');
+    return getSampleExtractedProducts('PDF Invoice / Purchase Order', defaultLocation);
   } catch {
-    return getSampleExtractedProducts('PDF Document');
+    return getSampleExtractedProducts('PDF Document', defaultLocation);
   }
 }
 
-function parseTokenStream(tokens: string[]): ParsedProductItem[] {
+function parseTokenStream(
+  tokens: string[],
+  defaultLocation: 'Bangalore' | 'Mumbai' | 'Delhi' = 'Bangalore'
+): ParsedProductItem[] {
   const items: ParsedProductItem[] = [];
   const skuPattern = /^[A-Z]{2,4}-?\d{3,4}$/i;
 
@@ -643,16 +726,19 @@ function parseTokenStream(tokens: string[]): ParsedProductItem[] {
       category,
       price,
       stock: 15,
-      location: 'Bangalore',
+      location: defaultLocation,
       image: CATEGORY_DEFAULT_IMAGES[category] || DEFAULT_IMAGE,
       description: `Imported item ${name} from document stream.`,
     });
   }
 
-  return items.length > 0 ? items : getSampleExtractedProducts('Extracted Manifest');
+  return items.length > 0 ? items : getSampleExtractedProducts('Extracted Manifest', defaultLocation);
 }
 
-export function getSampleExtractedProducts(sourceName: string): ParsedProductItem[] {
+export function getSampleExtractedProducts(
+  sourceName: string,
+  _defaultLocation: 'Bangalore' | 'Mumbai' | 'Delhi' = 'Bangalore'
+): ParsedProductItem[] {
   return [
     {
       name: 'Sony WH-1000XM5 ANC Headset',
@@ -661,6 +747,7 @@ export function getSampleExtractedProducts(sourceName: string): ParsedProductIte
       price: 26999,
       stock: 18,
       location: 'Bangalore',
+      fileLocation: 'Bangalore',
       image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=600&q=80',
       description: `Verified import from ${sourceName} with adaptive noise cancellation.`,
     },
@@ -671,6 +758,7 @@ export function getSampleExtractedProducts(sourceName: string): ParsedProductIte
       price: 24900,
       stock: 25,
       location: 'Mumbai',
+      fileLocation: 'Mumbai',
       image: 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=600&q=80',
       description: `Verified import from ${sourceName} with MagSafe charging case.`,
     },
@@ -681,6 +769,7 @@ export function getSampleExtractedProducts(sourceName: string): ParsedProductIte
       price: 139999,
       stock: 6,
       location: 'Delhi',
+      fileLocation: 'Delhi',
       image: 'https://images.unsplash.com/photo-1603302576837-37561b2e2302?auto=format&fit=crop&w=600&q=80',
       description: `Verified import from ${sourceName} with 13th Gen Intel Core i9.`,
     },
@@ -691,6 +780,7 @@ export function getSampleExtractedProducts(sourceName: string): ParsedProductIte
       price: 129999,
       stock: 14,
       location: 'Bangalore',
+      fileLocation: 'Bangalore',
       image: 'https://images.unsplash.com/photo-1592750475338-74b7b21085ab?auto=format&fit=crop&w=600&q=80',
       description: `Verified import from ${sourceName} with Titanium frame & S-Pen.`,
     },

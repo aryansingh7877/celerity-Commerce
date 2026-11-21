@@ -1,6 +1,20 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Product, MerchantTab, StoreLocation } from '../../types/product';
-import { loadCatalog, saveCatalog, clearCatalog } from '../../lib/merchantInventoryStore';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Product, MerchantTab, StoreLocation, PaymentDiscountOffer } from '../../types/product';
+import {
+  loadCatalog,
+  saveCatalog,
+  clearCatalog,
+  setActiveMerchantScope,
+} from '../../lib/merchantInventoryStore';
+import {
+  adjustAdminStock,
+  clearAdminCatalog,
+  createAdminProduct,
+  deleteAdminProduct,
+  fetchAdminProducts,
+  updateAdminProduct,
+} from '../../lib/commerceApi';
+import { api } from '../../lib/api';
 import { MerchantSidebar } from './layout/MerchantSidebar';
 import { MerchantTopbar } from './layout/MerchantTopbar';
 import { OverviewPage } from './pages/Overview';
@@ -10,6 +24,13 @@ import { CategoriesPage } from './pages/Categories';
 import { StockManagementPage } from './pages/StockManagement';
 import { StoreLocationsPage } from './pages/StoreLocations';
 import { SettingsPage } from './pages/Settings';
+import {
+  OrdersAdminPage,
+  DeadStockPage,
+  SuppliersPage,
+  RestockPage,
+  NotificationsPage,
+} from './pages/AdminOpsPages';
 import { AddProductModal } from './dashboard/AddProductModal';
 import { EditProductModal } from './dashboard/EditProductModal';
 import { DeleteConfirmation } from './dashboard/DeleteConfirmation';
@@ -20,7 +41,6 @@ import {
 } from './dashboard/InventoryActionModals';
 import { CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PaymentDiscountOffer } from '../../types/product';
 
 interface MerchantDashboardProps {
   onExitToStorefront: () => void;
@@ -35,13 +55,20 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
   merchantName = 'Aryan Singh',
   merchantEmail = 'aryansingh787769@gmail.com',
 }) => {
-  // ── 1. Core State — hydrate from saved catalog (empty until first upload) ──
-  const [products, setProducts] = useState<Product[]>(() => loadCatalog());
+  // ── 1. Core State — hydrate from saved catalog scoped to this merchant (empty until first upload) ──
+  const merchantScope = (merchantEmail || merchantName || 'anonymous').trim().toLowerCase();
+  const [products, setProducts] = useState<Product[]>(() => loadCatalog(merchantScope));
   const [currentTab, setCurrentTab] = useState<MerchantTab>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLocation, setSelectedLocation] = useState<StoreLocation>('All Locations');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const skipFirstSave = useRef(true);
+
+  useEffect(() => {
+    setActiveMerchantScope(merchantScope);
+    skipFirstSave.current = true;
+    setProducts(loadCatalog(merchantScope));
+  }, [merchantScope]);
 
   // ── 2. Modals State ──
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -64,37 +91,91 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     setTimeout(() => setToastMessage(null), 3000);
   };
 
+  // Sync from Express Admin API if reachable + keep localStorage persisted
+  const [apiConnected, setApiConnected] = useState(false);
+
+  const refreshFromApi = useCallback(async () => {
+    try {
+      const apiRows = await fetchAdminProducts();
+      setApiConnected(true);
+      if (apiRows.length > 0) {
+        setProducts((prev) => {
+          // Do not prefill a brand-new merchant's empty catalog with shared DB products from other accounts
+          if (prev.length === 0) return prev;
+          // Only sync SKUs that belong to this merchant's local catalog
+          const localBySku = new Map(prev.map((p) => [p.sku.toUpperCase(), p]));
+          const synced = apiRows
+            .filter((row) => localBySku.has(row.sku.toUpperCase()))
+            .map((row) => {
+              const match = localBySku.get(row.sku.toUpperCase())!;
+              return {
+                ...row,
+                images: match.images || row.images,
+                paymentOffers: match.paymentOffers,
+                supplierName: match.supplierName || row.supplierName,
+                supplierPhone: match.supplierPhone || row.supplierPhone,
+              };
+            });
+          return synced.length > 0 ? synced : prev;
+        });
+      }
+    } catch {
+      setApiConnected(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshFromApi();
+    const id = setInterval(() => void refreshFromApi(), 10_000);
+    const onFocus = () => void refreshFromApi();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [refreshFromApi]);
+
   // Persist inventory after every change (upload, edit, stock, delete)
   useEffect(() => {
     if (skipFirstSave.current) {
       skipFirstSave.current = false;
       return;
     }
-    const result = saveCatalog(products);
+    const result = saveCatalog(products, merchantScope);
     if (!result.ok && result.error) {
       showToast(result.error);
     }
-  }, [products]);
+  }, [products, merchantScope]);
 
   // ── 4. Stock Adjustments (Prevent Negative Quantities) ──
-  const handleAdjustStock = (productId: string, delta: number) => {
+  const handleAdjustStock = async (productId: string, delta: number) => {
+    const row = products.find((p) => p.id === productId);
+    const newStock = row ? Math.max(0, row.stock + delta) : 0;
+
     setProducts((prev) =>
       prev.map((p) => {
         if (p.id === productId) {
-          const newStock = Math.max(0, p.stock + delta);
           return {
             ...p,
-            stock: newStock,
+            stock: Math.max(0, p.stock + delta),
             lastUpdated: new Date().toISOString(),
           };
         }
         return p;
       })
     );
+
+    if (apiConnected && row) {
+      try {
+        await adjustAdminStock(productId, row.location, newStock);
+      } catch {
+        /* local state already updated */
+      }
+    }
   };
 
   // ── 5. Add Single Product ──
-  const handleAddProduct = (newProd: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>) => {
+  const handleAddProduct = async (newProd: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>) => {
     const created: Product = {
       ...newProd,
       id: `prod-${Date.now().toString(36)}`,
@@ -102,6 +183,17 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
       lastUpdated: new Date().toISOString(),
     };
     setProducts((prev) => [created, ...prev]);
+
+    if (apiConnected) {
+      try {
+        await createAdminProduct(newProd);
+        await refreshFromApi();
+        showToast(`Added "${created.name}" to Aiven & local inventory.`);
+        return;
+      } catch {
+        /* fallback to local toast */
+      }
+    }
     showToast(`Added "${created.name}" to inventory.`);
   };
 
@@ -111,7 +203,7 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
   };
 
   // ── 5b. Bulk import replaces or upserts by SKU cleanly into catalog ──
-  const handleAddBulkProducts = (
+  const handleAddBulkProducts = async (
     newProds: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>[],
     replaceExisting = true
   ) => {
@@ -130,12 +222,31 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     });
     setCurrentTab('inventory');
     setIsAddModalOpen(false);
+
+    if (apiConnected) {
+      try {
+        for (const p of newProds) {
+          const image =
+            p.image && p.image.startsWith('data:') && p.image.length > 200_000
+              ? 'https://images.unsplash.com/photo-1603302576837-37561b2e2302?auto=format&fit=crop&w=600&q=80'
+              : p.image;
+          await createAdminProduct({ ...p, image });
+        }
+        await api('/api/admin/reindex', { method: 'POST' }).catch(() => undefined);
+        await refreshFromApi();
+      } catch {
+        /* local catalog already updated */
+      }
+    }
     showToast(`Imported ${createdList.length} classified SKUs to inventory.`);
   };
 
-  const handleClearCatalog = () => {
-    clearCatalog();
+  const handleClearCatalog = async () => {
+    clearCatalog(merchantScope);
     setProducts([]);
+    if (apiConnected) {
+      await clearAdminCatalog().catch(() => undefined);
+    }
     showToast('Cleared catalog inventory.');
   };
 
@@ -145,8 +256,11 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     setIsEditModalOpen(true);
   };
 
-  const handleUpdateProduct = (updated: Product) => {
+  const handleUpdateProduct = async (updated: Product) => {
     setProducts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    if (apiConnected) {
+      await updateAdminProduct(updated).catch(() => undefined);
+    }
     showToast(`Updated "${updated.name}" details.`);
   };
 
@@ -156,10 +270,14 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     setIsDeleteModalOpen(true);
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (productToDelete) {
-      setProducts((prev) => prev.filter((p) => p.id !== productToDelete.id));
-      showToast(`Removed "${productToDelete.name}" from catalog.`);
+      const target = productToDelete;
+      setProducts((prev) => prev.filter((p) => p.id !== target.id));
+      if (apiConnected) {
+        await deleteAdminProduct(target.id).catch(() => undefined);
+      }
+      showToast(`Removed "${target.name}" from catalog.`);
       setIsDeleteModalOpen(false);
       setProductToDelete(null);
     }
@@ -355,6 +473,18 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
               }}
             />
           )}
+
+          {currentTab === 'orders' && <OrdersAdminPage />}
+          {currentTab === 'deadstock' && (
+            <DeadStockPage
+              products={products}
+              onSuggestSolutions={(prod) => setDeadStockModalProduct(prod)}
+              onOpenPaymentDiscounts={(prod) => setPaymentModalProduct(prod)}
+            />
+          )}
+          {currentTab === 'suppliers' && <SuppliersPage />}
+          {currentTab === 'restock' && <RestockPage />}
+          {currentTab === 'notifications' && <NotificationsPage />}
 
           {currentTab === 'settings' && (
             <SettingsPage

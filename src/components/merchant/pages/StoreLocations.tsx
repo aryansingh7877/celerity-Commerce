@@ -28,7 +28,10 @@ export const StoreLocationsPage: React.FC<StoreLocationsPageProps> = ({
       {/* ── 2. Location Cards Grid ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {MOCK_LOCATIONS.map((loc, idx) => {
-          const locProducts = products.filter((p) => p.location === loc.city);
+          const locProducts = products.filter((p) => {
+            const normalizedLoc = p.location === 'Bengaluru' ? 'Bangalore' : p.location;
+            return normalizedLoc === loc.city;
+          });
           const totalUnits = locProducts.reduce((sum, p) => sum + p.stock, 0);
 
           return (

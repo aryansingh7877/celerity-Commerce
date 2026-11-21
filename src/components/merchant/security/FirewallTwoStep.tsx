@@ -15,7 +15,6 @@ import {
   enrollTotpFactor,
   getEmailTwoStepEnabled,
   listVerifiedTotpFactors,
-  sendEmailTwoStepCode,
   setEmailTwoStepEnabled,
   unenrollTotpFactor,
   verifyTotpCode,
@@ -23,9 +22,27 @@ import {
 
 /**
  * Firewall two-step — enable authenticator and/or email; user chooses at login.
+ * Works with live Supabase JWT + Express API, and degrades cleanly to local demo mode when using an unconfirmed fallback session.
  */
+const DEMO_2FA_KEY = 'celerity_demo_2fa_prefs_v1';
+
+function makeDemoQrSvg(secret: string): string {
+  const safe = secret.slice(0, 16);
+  const cells: string[] = [];
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 9; c++) {
+      const code = safe.charCodeAt((r * 9 + c) % safe.length);
+      if ((code + r + c) % 2 === 0 || (r < 3 && c < 3) || (r < 3 && c > 5) || (r > 5 && c < 3)) {
+        cells.push(`<rect x="${12 + c * 10}" y="${12 + r * 10}" width="8" height="8" rx="1.5" fill="#064E36"/>`);
+      }
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 114 114" width="114" height="114"><rect width="114" height="114" fill="#FFFFFF"/>${cells.join('')}</svg>`;
+}
+
 export const FirewallTwoStep: React.FC = () => {
-  const { user } = useAuth();
+  const { user, session, signOut } = useAuth();
+  const hasRealJwt = Boolean(session?.access_token);
 
   const [loading, setLoading] = useState(true);
   const [emailOn, setEmailOn] = useState(false);
@@ -44,12 +61,37 @@ export const FirewallTwoStep: React.FC = () => {
   const [secret, setSecret] = useState<string | null>(null);
   const [code, setCode] = useState('');
 
+  const readDemoPrefs = () => {
+    try {
+      const raw = localStorage.getItem(DEMO_2FA_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const writeDemoPrefs = (patch: Record<string, unknown>) => {
+    try {
+      const curr = readDemoPrefs();
+      localStorage.setItem(DEMO_2FA_KEY, JSON.stringify({ ...curr, ...patch }));
+    } catch {
+      /* ignore */
+    }
+  };
+
   const refresh = useCallback(async () => {
     if (!user?.id) {
       setLoading(false);
       return;
     }
     setLoading(true);
+    if (!hasRealJwt) {
+      const prefs = readDemoPrefs();
+      setEmailOn(Boolean(prefs.emailOn));
+      setTotpFactors(Array.isArray(prefs.totpFactors) ? prefs.totpFactors : []);
+      setLoading(false);
+      return;
+    }
     const [emailEnabled, { factors }] = await Promise.all([
       getEmailTwoStepEnabled(user.id),
       listVerifiedTotpFactors(),
@@ -57,14 +99,14 @@ export const FirewallTwoStep: React.FC = () => {
     setEmailOn(emailEnabled);
     setTotpFactors(factors);
     setLoading(false);
-  }, [user?.id]);
+  }, [user?.id, hasRealJwt]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   const enableEmail = async () => {
-    if (!user?.id || !user.email) {
+    if (!user?.id) {
       setError('Sign in again to enable email verification.');
       return;
     }
@@ -72,21 +114,25 @@ export const FirewallTwoStep: React.FC = () => {
     setError(null);
     setOkMsg(null);
     try {
-      const { error: sendErr } = await sendEmailTwoStepCode(user.email);
-      if (sendErr) {
-        setError(
-          sendErr.message ||
-            'Could not send a test code. Check the API is running and Supabase Auth email is enabled.'
+      if (!hasRealJwt) {
+        writeDemoPrefs({ emailOn: true });
+        setEmailOn(true);
+        setOkMsg(
+          'Email verification enabled. At sign-in, enter your email to receive a 6-digit code.'
         );
         return;
       }
+
+      // Enable only — retailers enter email and receive a code at login (no API keys for them).
       const { error: updErr } = await setEmailTwoStepEnabled(user.id, true);
       if (updErr) {
         setError(updErr.message);
         return;
       }
       setEmailOn(true);
-      setOkMsg(`Email verification enabled. A 6-digit test code was sent to ${user.email}.`);
+      setOkMsg(
+        'Email verification enabled. At sign-in, enter your email to receive a 6-digit code.'
+      );
     } finally {
       setBusy(false);
     }
@@ -98,6 +144,12 @@ export const FirewallTwoStep: React.FC = () => {
     setBusy(true);
     setError(null);
     try {
+      if (!hasRealJwt) {
+        writeDemoPrefs({ emailOn: false });
+        setEmailOn(false);
+        setOkMsg('Demo email two-step disabled.');
+        return;
+      }
       const { error: updErr } = await setEmailTwoStepEnabled(user.id, false);
       if (updErr) {
         setError(updErr.message);
@@ -115,6 +167,14 @@ export const FirewallTwoStep: React.FC = () => {
     setError(null);
     setOkMsg(null);
     try {
+      if (!hasRealJwt) {
+        const demoSecret = 'CELERITY2FADEMO7';
+        setFactorId(`demo-totp-${Date.now()}`);
+        setSecret(demoSecret);
+        setQr(makeDemoQrSvg(demoSecret));
+        setEnrolling(true);
+        return;
+      }
       const { data, error: err } = await enrollTotpFactor('Celerity Authenticator');
       if (err || !data) {
         setError(err?.message || 'Could not start authenticator enrollment.');
@@ -135,6 +195,21 @@ export const FirewallTwoStep: React.FC = () => {
     setBusy(true);
     setError(null);
     try {
+      if (!hasRealJwt) {
+        if (code.trim().length !== 6) {
+          setError('Please enter any 6-digit verification code in demo mode.');
+          return;
+        }
+        const nextFactors = [...totpFactors, { id: factorId, friendly_name: 'Celerity Authenticator (Demo)' }];
+        writeDemoPrefs({ totpFactors: nextFactors });
+        setTotpFactors(nextFactors);
+        setEnrolling(false);
+        setQr(null);
+        setSecret(null);
+        setCode('');
+        setOkMsg('Demo Authenticator linked! For production Supabase TOTP MFA, sign in with a confirmed Supabase account.');
+        return;
+      }
       const { data: challenge, error: chErr } = await challengeTotpFactor(factorId);
       if (chErr || !challenge?.id) {
         setError(chErr?.message || 'Challenge failed');
@@ -165,6 +240,13 @@ export const FirewallTwoStep: React.FC = () => {
     setBusy(true);
     setError(null);
     try {
+      if (!hasRealJwt) {
+        const nextFactors = totpFactors.filter((f) => f.id !== id);
+        writeDemoPrefs({ totpFactors: nextFactors });
+        setTotpFactors(nextFactors);
+        setOkMsg('Authenticator removed.');
+        return;
+      }
       const { error: err } = await unenrollTotpFactor(id);
       if (err) {
         setError(err.message);
@@ -199,6 +281,24 @@ export const FirewallTwoStep: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {!hasRealJwt && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 rounded-2xl bg-[#FFFBEB] border border-[#E8D58A] px-4 py-3 text-xs text-[#735E18]">
+          <div>
+            <p className="font-bold">Local Fallback Session Detected (No Supabase JWT)</p>
+            <p className="text-[11px] opacity-90 mt-0.5">
+              Two-step settings below will run in local demo mode. For live Supabase TOTP &amp; real Email OTPs, sign in with a confirmed Supabase account.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            className="px-3 py-1.5 rounded-xl bg-white border border-[#E8D58A] text-[11px] font-extrabold text-[#735E18] hover:bg-[#F5EBCB] shrink-0 cursor-pointer"
+          >
+            Sign Out &amp; Re-Authenticate
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="flex gap-2 rounded-xl bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700">

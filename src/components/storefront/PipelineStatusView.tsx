@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft,
   Database,
@@ -22,6 +22,14 @@ import {
   clearStockOverrides,
   resetPipelineEvents,
 } from '../../lib/storefrontCatalog';
+import { API_URL } from '../../lib/api';
+
+interface ApiHealthSnapshot {
+  ok: boolean;
+  database?: { ok: boolean; error?: string };
+  kafka?: { configured: boolean; topic?: string };
+  opensearch?: { ok: boolean; error?: string };
+}
 
 interface PipelineStatusViewProps {
   city: CityName;
@@ -39,6 +47,28 @@ export const PipelineStatusView: React.FC<PipelineStatusViewProps> = ({
   const [events, setEvents] = useState<PipelineEventLog[]>(() =>
     getPipelineEvents()
   );
+  const [liveHealth, setLiveHealth] = useState<ApiHealthSnapshot | null>(null);
+
+  const probeHealth = async () => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3000);
+      const res = await fetch(`${API_URL}/api/health`, { signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = (await res.json()) as ApiHealthSnapshot;
+        setLiveHealth(data);
+        return;
+      }
+      setLiveHealth(null);
+    } catch {
+      setLiveHealth(null);
+    }
+  };
+
+  useEffect(() => {
+    void probeHealth();
+  }, []);
 
   const totalCityUnits = catalog.reduce(
     (sum, p) => sum + (p.cityStock[city] ?? 0),
@@ -114,7 +144,9 @@ export const PipelineStatusView: React.FC<PipelineStatusViewProps> = ({
         <div className="space-y-2 max-w-2xl">
           <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#65B99B]/20 text-[#65B99B] text-[11px] font-extrabold uppercase tracking-wider">
             <span className="w-2 h-2 rounded-full bg-[#65B99B] animate-pulse" />
-            Aiven Data Pipeline Telemetry · Live Session Data
+            {liveHealth
+              ? 'Live Backend Connected (/api/health)'
+              : 'Aiven Data Pipeline Telemetry · Live Session Data'}
           </span>
           <h1 className="font-display font-black text-2xl sm:text-3xl">
             PostgreSQL → Apache Kafka → OpenSearch Flow

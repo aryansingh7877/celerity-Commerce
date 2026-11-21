@@ -36,14 +36,26 @@ cd celerity-Commerce
 npm install
 ```
 
-### 3. Run Development Server
-```bash
-npm run dev
-```
+### 3. Environment (same `.env` for every clone)
+`.env` is gitignored — never commit it. Teammates need the **same** values:
 
-### 4. Backend pipeline (Supabase)
 ```bash
 cp .env.example .env
+# then paste the shared team keys (Supabase, Aiven, Resend, etc.)
+```
+
+Email 2FA sends a code to **any** address typed at challenge time.  
+If Resend is still on `onboarding@resend.dev` (test mode), inbox delivery may only work for the Resend owner — the API then prints the 6-digit code in the terminal (`EMAIL_2FA_CONSOLE_FALLBACK`, default on) so every clone with that `.env` can unlock. For real delivery to every inbox, verify a Resend domain (or set SMTP) and update `EMAIL_FROM`.
+
+### 4. Run (API + Vite)
+```bash
+npx tsx server/src/index.ts                 # API :4000
+npx vite --host 127.0.0.1 --port 3001       # app :3001
+# or: npm run dev  (frontend; API must still be on :4000)
+```
+
+### 5. Backend pipeline (Supabase)
+```bash
 # Apply SQL migrations in supabase/migrations/ (Dashboard SQL Editor or `npm run db:push`)
 npm run functions:serve    # Edge Functions locally
 npm run worker:outbox      # drains outbox (optional)
@@ -52,7 +64,7 @@ npm run pipeline:smoke     # RPC smoke check
 
 Details: [`supabase/README.md`](supabase/README.md)
 
-### 5. Build for Production
+### 6. Build for Production
 ```bash
 npm run build
 ```

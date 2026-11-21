@@ -2,7 +2,7 @@ export type ProductCategory = 'Headphones' | 'Earphones' | 'Laptops' | 'Smartpho
 
 export type StockStatus = 'in_stock' | 'low_stock' | 'out_of_stock';
 
-export type StoreLocation = 'Bangalore' | 'Mumbai' | 'Delhi' | 'All Locations';
+export type StoreLocation = 'Bangalore' | 'Mumbai' | 'Delhi' | 'Bengaluru' | 'All Locations';
 
 export interface PaymentDiscountOffer {
   id: string;
@@ -19,7 +19,7 @@ export interface Product {
   category: ProductCategory;
   price: number;
   stock: number;
-  location: 'Bangalore' | 'Mumbai' | 'Delhi';
+  location: 'Bangalore' | 'Mumbai' | 'Delhi' | 'Bengaluru';
   image: string;
   images?: string[];
   description: string;
@@ -37,6 +37,11 @@ export type MerchantTab =
   | 'categories'
   | 'stock'
   | 'locations'
+  | 'orders'
+  | 'deadstock'
+  | 'suppliers'
+  | 'restock'
+  | 'notifications'
   | 'settings';
 
 export interface CategorySummary {

@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { asyncHandler, HttpError } from '../middleware/errors.js';
 import { getPool } from '../db/pool.js';
+import {
+  issueEmailTwoStepCode,
+  verifyEmailTwoStepCode as verifyStoredEmailCode,
+} from '../services/emailTwoStep.js';
 
 export const authRouter = Router();
 
@@ -11,6 +15,39 @@ authRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     res.json({ user: req.user });
+  })
+);
+
+authRouter.post(
+  '/email-2fa/send',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const body = z
+      .object({
+        email: z.string().email(),
+      })
+      .parse(req.body);
+    const entered = body.email.trim().toLowerCase();
+    // Send the 6-digit code to whatever address the user enters (not limited to account email).
+    const result = await issueEmailTwoStepCode(req.user!.id, entered);
+    res.json({ ok: true, delivery: result.delivery, channel: result.channel });
+  })
+);
+
+authRouter.post(
+  '/email-2fa/verify',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const body = z
+      .object({
+        code: z.string().min(4).max(12),
+        email: z.string().email().optional(),
+      })
+      .parse(req.body);
+    const email = (body.email || req.user!.email || '').trim().toLowerCase() || null;
+    const result = await verifyStoredEmailCode(req.user!.id, body.code, email);
+    if (!result.ok) throw new HttpError(400, result.error);
+    res.json({ ok: true });
   })
 );
 

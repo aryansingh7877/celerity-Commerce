@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Plus,
   Search,
@@ -8,6 +8,8 @@ import {
   SlidersHorizontal,
   Download,
   Boxes,
+  Trash2,
+  Layers,
 } from 'lucide-react';
 import { Product, ProductCategory, StockStatus, StoreLocation } from '../../../types/product';
 import { InventoryTable } from '../dashboard/InventoryTable';
@@ -18,6 +20,7 @@ interface InventoryPageProps {
   onEditProduct: (product: Product) => void;
   onDeleteProduct: (product: Product) => void;
   onAdjustStock: (productId: string, delta: number) => void;
+  onClearCatalog?: () => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
   selectedLocation: StoreLocation;
@@ -33,6 +36,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   onEditProduct,
   onDeleteProduct,
   onAdjustStock,
+  onClearCatalog,
   searchQuery,
   onSearchChange,
   selectedLocation,
@@ -43,7 +47,25 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   const [sortField, setSortField] = useState<SortField>('name');
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
-  const categories = ['All', 'Headphones', 'Earphones', 'Laptops', 'Smartphones'];
+  const categories = useMemo(() => {
+    const uniqueCats = Array.from(new Set(products.map((p) => p.category).filter(Boolean)));
+    return ['All', ...uniqueCats];
+  }, [products]);
+
+  useEffect(() => {
+    if (selectedCategory !== 'All' && !categories.includes(selectedCategory)) {
+      setSelectedCategory('All');
+    }
+  }, [categories, selectedCategory]);
+
+  const totalUnits = useMemo(
+    () => products.reduce((sum, p) => sum + p.stock, 0),
+    [products]
+  );
+  const totalValue = useMemo(
+    () => products.reduce((sum, p) => sum + p.stock * p.price, 0),
+    [products]
+  );
 
   // Filter and sort products
   const filteredProducts = useMemo(() => {
@@ -113,17 +135,63 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
+          {products.length > 0 && onClearCatalog && (
+            <button
+              type="button"
+              onClick={onClearCatalog}
+              className="px-3.5 py-2.5 rounded-xl border border-[#E8EBE7] bg-white hover:bg-red-50 hover:border-red-200 text-xs font-bold text-[#7C877F] hover:text-red-600 transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Clear Catalog</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={onOpenAddProduct}
             className="px-5 py-2.5 rounded-xl bg-[#064E36] hover:bg-[#103C2D] text-white font-display font-bold text-xs shadow-md shadow-[#064E36]/20 transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
           >
             <Plus className="w-4 h-4 text-[#C8E8D9]" />
-            <span>Add Product</span>
+            <span>Add / Upload Catalog</span>
           </button>
         </div>
       </div>
+
+      {/* ── 1b. Classification Summary Strip ── */}
+      {products.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="p-3.5 rounded-2xl bg-white border border-[#E8EBE7] shadow-2xs">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#7C877F] block">
+              Classified SKUs
+            </span>
+            <span className="font-display font-black text-xl text-[#202A24]">{products.length}</span>
+          </div>
+          <div className="p-3.5 rounded-2xl bg-white border border-[#E8EBE7] shadow-2xs">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#7C877F] block">
+              Detected Categories
+            </span>
+            <span className="font-display font-black text-xl text-[#064E36]">
+              {Math.max(0, categories.length - 1)}
+            </span>
+          </div>
+          <div className="p-3.5 rounded-2xl bg-white border border-[#E8EBE7] shadow-2xs">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#7C877F] block">
+              Total Stock Units
+            </span>
+            <span className="font-display font-black text-xl text-[#202A24]">
+              {totalUnits.toLocaleString('en-IN')}
+            </span>
+          </div>
+          <div className="p-3.5 rounded-2xl bg-white border border-[#E8EBE7] shadow-2xs">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#7C877F] block">
+              Inventory Value
+            </span>
+            <span className="font-mono font-bold text-xl text-[#064E36]">
+              ₹{totalValue.toLocaleString('en-IN')}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* ── 2. Filters & Search Controls Card ── */}
       <div className="p-4 sm:p-5 rounded-2xl bg-white border border-[#E8EBE7] shadow-2xs space-y-4">

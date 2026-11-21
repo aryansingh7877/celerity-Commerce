@@ -149,10 +149,24 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                 onChange={(e) => setCategory(e.target.value)}
                 className="w-full px-4 py-2.5 rounded-xl bg-[#FAF9F5] border border-[#E8EBE7] focus:bg-white focus:border-[#064E36] outline-none text-sm font-semibold text-[#202A24]"
               >
-                <option value="Headphones">Headphones</option>
-                <option value="Earphones">Earphones</option>
-                <option value="Laptops">Laptops</option>
-                <option value="Smartphones">Smartphones</option>
+                {Array.from(
+                  new Set([
+                    category,
+                    'Headphones',
+                    'Earphones',
+                    'Laptops',
+                    'Smartphones',
+                    'Top Load',
+                    'Front Load',
+                    'Semi-Automatic',
+                    'Front Load Washer Dryer',
+                    'Washing Machines',
+                  ].filter(Boolean))
+                ).map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
               </select>
             </div>
 

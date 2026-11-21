@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Product, MerchantTab, StoreLocation } from '../../types/product';
-import { loadCatalog, saveCatalog } from '../../lib/merchantInventoryStore';
+import { loadCatalog, saveCatalog, clearCatalog } from '../../lib/merchantInventoryStore';
 import { MerchantSidebar } from './layout/MerchantSidebar';
 import { MerchantTopbar } from './layout/MerchantTopbar';
 import { OverviewPage } from './pages/Overview';
@@ -99,18 +99,33 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     setIsAddModalOpen(true);
   };
 
-  // ── 5b. Bulk import replaces empty catalog / merges into existing ──
-  const handleAddBulkProducts = (newProds: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>[]) => {
+  // ── 5b. Bulk import replaces or upserts by SKU cleanly into catalog ──
+  const handleAddBulkProducts = (
+    newProds: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>[],
+    replaceExisting = true
+  ) => {
+    const now = new Date().toISOString();
     const createdList: Product[] = newProds.map((item, idx) => ({
       ...item,
       id: `prod-${Date.now().toString(36)}-${idx}`,
-      createdAt: new Date().toISOString(),
-      lastUpdated: new Date().toISOString(),
+      createdAt: now,
+      lastUpdated: now,
     }));
-    setProducts((prev) => (prev.length === 0 ? createdList : [...createdList, ...prev]));
-    setCurrentTab('overview');
+    setProducts((prev) => {
+      if (replaceExisting || prev.length === 0) return createdList;
+      const incomingSkus = new Set(createdList.map((p) => p.sku.toUpperCase()));
+      const kept = prev.filter((p) => !incomingSkus.has(p.sku.toUpperCase()));
+      return [...createdList, ...kept];
+    });
+    setCurrentTab('inventory');
     setIsAddModalOpen(false);
-    showToast(`Saved ${createdList.length} products — reload will keep this catalog.`);
+    showToast(`Imported ${createdList.length} classified SKUs to inventory.`);
+  };
+
+  const handleClearCatalog = () => {
+    clearCatalog();
+    setProducts([]);
+    showToast('Cleared catalog inventory.');
   };
 
   // ── 6. Edit Product ──
@@ -208,10 +223,11 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
           {currentTab === 'inventory' && (
             <InventoryPage
               products={products}
-              onOpenAddProduct={() => openAddModal(products.length === 0)}
+              onOpenAddProduct={() => openAddModal(true)}
               onEditProduct={handleOpenEdit}
               onDeleteProduct={handleOpenDelete}
               onAdjustStock={handleAdjustStock}
+              onClearCatalog={handleClearCatalog}
               searchQuery={searchQuery}
               onSearchChange={setSearchQuery}
               selectedLocation={selectedLocation}
@@ -249,6 +265,8 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
               products={products}
               onAdjustStock={handleAdjustStock}
               onEditProduct={handleOpenEdit}
+              onNavigateTab={setCurrentTab}
+              merchantName={merchantName}
             />
           )}
 

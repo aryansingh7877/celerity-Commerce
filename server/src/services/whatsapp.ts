@@ -3,8 +3,40 @@ import { getPool } from '../db/pool.js';
 
 export type WhatsAppSendResult =
   | { ok: true; messageId: string; response: unknown }
-  | { ok: false; status: 'pending_configuration' | 'failed'; reason: string; response?: unknown };
+  | {
+      ok: false;
+      status: 'pending_configuration' | 'failed';
+      reason: string;
+      response?: unknown;
+      code?: string;
+    };
 
+/** Expected body parameter count for the configured restock template. */
+export const WHATSAPP_TEMPLATE_PARAM_COUNT = 7;
+
+export function whatsappTemplateStatus() {
+  return {
+    configured: env.hasWhatsApp,
+    templateName: env.WHATSAPP_TEMPLATE_NAME || null,
+    language: env.WHATSAPP_TEMPLATE_LANG || 'en',
+    expectedBodyParams: WHATSAPP_TEMPLATE_PARAM_COUNT,
+    paramOrder: [
+      'supplierName',
+      'productName',
+      'sku',
+      'city',
+      'stock',
+      'reorderThreshold',
+      'suggestedQty',
+    ],
+    mode: 'template_only' as const,
+  };
+}
+
+/**
+ * Template-only WhatsApp Cloud API send.
+ * Plain-text fallback removed (P0).
+ */
 export async function sendRestockWhatsApp(input: {
   toE164: string;
   supplierName: string;
@@ -19,14 +51,26 @@ export async function sendRestockWhatsApp(input: {
     return {
       ok: false,
       status: 'pending_configuration',
-      reason: 'WhatsApp credentials missing (WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_TEMPLATE_NAME)',
+      reason:
+        'WhatsApp credentials missing (WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_TEMPLATE_NAME)',
+      code: 'WHATSAPP_NOT_CONFIGURED',
     };
   }
 
-  const url = `https://graph.facebook.com/v19.0/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
+  const to = input.toE164.replace(/\D/g, '');
+  if (!to || to.length < 8) {
+    return {
+      ok: false,
+      status: 'failed',
+      reason: 'Invalid supplier phone number',
+      code: 'INVALID_PHONE',
+    };
+  }
+
+  const url = `https://graph.facebook.com/v21.0/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
   const body = {
     messaging_product: 'whatsapp',
-    to: input.toE164.replace(/\D/g, ''),
+    to,
     type: 'template',
     template: {
       name: env.WHATSAPP_TEMPLATE_NAME,
@@ -48,59 +92,36 @@ export async function sendRestockWhatsApp(input: {
     },
   };
 
-  const headers = {
-    Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,
-    'Content-Type': 'application/json',
-  };
-
   try {
     const res = await fetch(url, {
       method: 'POST',
-      headers,
+      headers: {
+        Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify(body),
     });
     const json = (await res.json()) as {
       messages?: Array<{ id: string }>;
-      error?: { message?: string };
+      error?: { message?: string; code?: number; error_data?: unknown };
     };
     if (res.ok && json.messages?.[0]?.id) {
       return { ok: true, messageId: json.messages[0].id, response: json };
     }
-
-    // Fallback plain text (works inside 24h customer-care window)
-    const textBody = {
-      messaging_product: 'whatsapp',
-      to: input.toE164.replace(/\D/g, ''),
-      type: 'text',
-      text: {
-        preview_url: false,
-        body: `Celerity restock alert for ${input.supplierName}:\n${input.productName} (${input.sku}) at ${input.city} is ${input.stock === 0 ? 'OUT OF STOCK' : `low (${input.stock})`}.\nSuggested reorder qty: ${input.suggestedQty}.`,
-      },
-    };
-    const textRes = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(textBody),
-    });
-    const textJson = (await textRes.json()) as {
-      messages?: Array<{ id: string }>;
-      error?: { message?: string };
-    };
-    if (textRes.ok && textJson.messages?.[0]?.id) {
-      return { ok: true, messageId: textJson.messages[0].id, response: textJson };
-    }
-
     return {
       ok: false,
       status: 'failed',
-      reason:
-        textJson.error?.message ||
-        json.error?.message ||
-        `HTTP ${res.status}/${textRes.status}`,
-      response: { template: json, text: textJson },
+      reason: json.error?.message || `WhatsApp HTTP ${res.status}`,
+      code: json.error?.code != null ? String(json.error.code) : 'WHATSAPP_API_ERROR',
+      response: json,
     };
   } catch (err) {
-    return { ok: false, status: 'failed', reason: (err as Error).message };
+    return {
+      ok: false,
+      status: 'failed',
+      reason: (err as Error).message,
+      code: 'WHATSAPP_NETWORK_ERROR',
+    };
   }
 }
 
@@ -113,7 +134,7 @@ export async function logNotification(input: {
   failureReason?: string;
 }) {
   const pool = getPool();
-  await pool.query(
+  const result = await pool.query<{ id: string }>(
     `INSERT INTO supplier_notification_logs
       (restock_request_id, supplier_id, status, provider_message_id, provider_response, failure_reason)
      VALUES ($1, $2, $3, $4, $5::jsonb, $6)
@@ -127,4 +148,5 @@ export async function logNotification(input: {
       input.failureReason ?? null,
     ]
   );
+  return result.rows[0]?.id;
 }

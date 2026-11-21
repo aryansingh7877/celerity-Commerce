@@ -106,6 +106,12 @@ export async function deleteAdminProduct(rowId: string) {
   await api(`/api/admin/products/${productUuid(rowId)}`, { method: 'DELETE' });
 }
 
+export async function clearAdminCatalog() {
+  return api<{ ok: boolean; cleared: number }>('/api/admin/catalog/clear', {
+    method: 'POST',
+  });
+}
+
 export async function updateAdminProduct(product: Product) {
   await api(`/api/admin/products/${productUuid(product.id)}`, {
     method: 'PUT',

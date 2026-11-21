@@ -1,0 +1,284 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { Loader2, ShieldCheck, AlertCircle, ArrowRight, Mail, Smartphone } from 'lucide-react';
+import { BrandLogo } from '../common/BrandLogo';
+import { useAuth } from '../../context/AuthContext';
+import {
+  TwoStepMethod,
+  challengeTotpFactor,
+  getTwoStepAvailability,
+  listVerifiedTotpFactors,
+  sendEmailTwoStepCode,
+  verifyEmailTwoStepCode,
+  verifyTotpCode,
+} from '../../lib/supabase/mfa';
+
+interface MfaChallengeProps {
+  onVerified: () => Promise<void> | void;
+  onCancel: () => Promise<void> | void;
+}
+
+export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel }) => {
+  const { user } = useAuth();
+  const email = user?.email || '';
+
+  const [loading, setLoading] = useState(true);
+  const [method, setMethod] = useState<TwoStepMethod>('email');
+  const [canEmail, setCanEmail] = useState(false);
+  const [canTotp, setCanTotp] = useState(false);
+
+  const [code, setCode] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [resending, setResending] = useState(false);
+
+  const [factorId, setFactorId] = useState<string | null>(null);
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!user?.id) {
+        setLoading(false);
+        return;
+      }
+      const avail = await getTwoStepAvailability(user.id);
+      if (cancelled) return;
+      setCanEmail(avail.email);
+      setCanTotp(avail.totp);
+      const initial: TwoStepMethod = avail.totp ? 'totp' : 'email';
+      setMethod(avail.email || avail.totp ? initial : 'email');
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  // Prepare method-specific challenge
+  useEffect(() => {
+    let cancelled = false;
+    setCode('');
+    setError(null);
+    setInfo(null);
+    setFactorId(null);
+    setChallengeId(null);
+
+    (async () => {
+      if (loading || !user?.id) return;
+      if (method === 'email' && canEmail && email) {
+        setInfo(`Sending a 6-digit code to ${email}…`);
+        const { error: sErr } = await sendEmailTwoStepCode(email);
+        if (cancelled) return;
+        if (sErr) {
+          setError(sErr.message || 'Could not send email code.');
+        } else {
+          setInfo(`6-digit code sent to ${email}. Check inbox / spam.`);
+        }
+        return;
+      }
+      if (method === 'totp' && canTotp) {
+        const { factors, error: listErr } = await listVerifiedTotpFactors();
+        if (cancelled) return;
+        if (listErr || !factors[0]) {
+          setError(listErr?.message || 'No authenticator enrolled.');
+          return;
+        }
+        setFactorId(factors[0].id);
+        const { data, error: chErr } = await challengeTotpFactor(factors[0].id);
+        if (cancelled) return;
+        if (chErr || !data?.id) {
+          setError(chErr?.message || 'Could not start authenticator challenge.');
+          return;
+        }
+        setChallengeId(data.id);
+        setInfo('Open your authenticator app and enter the 6-digit code.');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [method, canEmail, canTotp, email, loading, user?.id]);
+
+  const methods = useMemo(() => {
+    const list: Array<{ id: TwoStepMethod; label: string; icon: typeof Mail }> = [];
+    if (canTotp) list.push({ id: 'totp', label: 'Authenticator', icon: Smartphone });
+    if (canEmail) list.push({ id: 'email', label: 'Email code', icon: Mail });
+    return list;
+  }, [canEmail, canTotp]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const token = code.replace(/\s/g, '');
+    if (!/^\d{6,8}$/.test(token)) {
+      setError('Enter the verification code.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      if (method === 'email') {
+        if (!email) {
+          setError('Missing account email.');
+          return;
+        }
+        const { error: vErr } = await verifyEmailTwoStepCode(email, token);
+        if (vErr) {
+          setError(vErr.message || 'Invalid or expired email code.');
+          return;
+        }
+      } else {
+        if (!factorId || !challengeId) {
+          setError('Authenticator challenge is not ready yet.');
+          return;
+        }
+        const { error: vErr } = await verifyTotpCode({
+          factorId,
+          challengeId,
+          code: token,
+        });
+        if (vErr) {
+          setError(vErr.message || 'Invalid authenticator code.');
+          const { data } = await challengeTotpFactor(factorId);
+          if (data?.id) setChallengeId(data.id);
+          return;
+        }
+      }
+      await onVerified();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Verification failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resendEmail = async () => {
+    if (!email) return;
+    setResending(true);
+    setError(null);
+    try {
+      const { error: sErr } = await sendEmailTwoStepCode(email);
+      if (sErr) setError(sErr.message || 'Could not resend code.');
+      else setInfo(`A new 6-digit code was sent to ${email}.`);
+    } finally {
+      setResending(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen w-full bg-[#070A09] flex items-center justify-center px-4 py-10">
+      <div className="w-full max-w-md rounded-3xl bg-white border border-[#E8EBE7] shadow-2xl p-6 sm:p-8">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-11 h-11 rounded-2xl bg-[#0A2540] p-1.5 flex items-center justify-center">
+            <BrandLogo className="w-full h-full" />
+          </div>
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#65B99B]">
+              Firewall · Two-step verification
+            </p>
+            <h1 className="font-display text-xl font-black text-[#0A2540]">Choose a method</h1>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 py-12 text-xs font-bold text-[#7C877F]">
+            <Loader2 className="w-4 h-4 animate-spin" /> Preparing…
+          </div>
+        ) : (
+          <>
+            {methods.length > 1 && (
+              <div className="mb-4 grid grid-cols-2 gap-2 p-1 rounded-2xl bg-[#FAF9F5] border border-[#E8EBE7]">
+                {methods.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setMethod(m.id)}
+                    className={`inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                      method === m.id
+                        ? 'bg-[#0A2540] text-white shadow-sm'
+                        : 'text-[#5E6D64] hover:bg-white'
+                    }`}
+                  >
+                    <m.icon className="w-3.5 h-3.5" />
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="rounded-2xl bg-[#EAF4EC] border border-[#C8E8D9] p-3.5 mb-5 flex gap-3">
+              <ShieldCheck className="w-5 h-5 text-[#064E36] shrink-0 mt-0.5" />
+              <p className="text-xs text-[#064E36] leading-relaxed">
+                {info ||
+                  (method === 'email'
+                    ? 'Enter the code from your email.'
+                    : 'Enter the code from your authenticator app.')}
+              </p>
+            </div>
+
+            <form onSubmit={submit} className="space-y-4">
+              <label className="block">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#7C877F]">
+                  {method === 'email' ? 'Email code' : 'Authenticator code'}
+                </span>
+                <input
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={8}
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  className="mt-1.5 w-full px-4 py-3 rounded-2xl border border-[#E8EBE7] bg-[#FAF9F5] text-center text-2xl font-black tracking-[0.35em] text-[#0A2540] outline-none focus:border-[#064E36] focus:ring-2 focus:ring-[#65B99B]/30"
+                  placeholder="••••••"
+                  autoFocus
+                />
+              </label>
+
+              {error && (
+                <div className="flex items-start gap-2 rounded-xl bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={busy}
+                className="w-full inline-flex items-center justify-center gap-2 py-3 rounded-2xl bg-[#0A2540] hover:bg-[#064E36] text-white text-sm font-bold cursor-pointer disabled:opacity-60 transition-colors"
+              >
+                {busy ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Verifying…
+                  </>
+                ) : (
+                  <>
+                    Unlock session <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+
+              {method === 'email' && (
+                <button
+                  type="button"
+                  onClick={() => void resendEmail()}
+                  disabled={resending}
+                  className="w-full py-2.5 text-xs font-bold text-[#064E36] hover:underline cursor-pointer disabled:opacity-60"
+                >
+                  {resending ? 'Sending…' : 'Resend email code'}
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => void onCancel()}
+                className="w-full py-2.5 text-xs font-bold text-[#7C877F] hover:text-[#0A2540] cursor-pointer"
+              >
+                Cancel and sign out
+              </button>
+            </form>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};

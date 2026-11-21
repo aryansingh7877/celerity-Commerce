@@ -40,13 +40,16 @@ app.get('/api/health', async (_req, res) => {
       opensearch = { ok: false, error: (err as Error).message };
     }
   }
+  const { aiGatewayStatus } = await import('./services/aiGateway.js');
+  const { whatsappTemplateStatus } = await import('./services/whatsapp.js');
+  const ai = await aiGatewayStatus();
   res.json({
     ok: db.ok,
     database: db,
     kafka: { configured: Boolean(getKafka()), topic: env.KAFKA_TOPIC },
     opensearch,
-    whatsapp: { configured: env.hasWhatsApp },
-    ollama: { url: env.OLLAMA_URL, model: env.OLLAMA_MODEL },
+    whatsapp: whatsappTemplateStatus(),
+    ai,
   });
 });
 

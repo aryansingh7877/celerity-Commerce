@@ -49,8 +49,22 @@ const envSchema = z.object({
   WHATSAPP_TEMPLATE_NAME: z.string().optional(),
   WHATSAPP_TEMPLATE_LANG: z.string().default('en'),
 
+  GROQ_API_KEY: z.string().optional(),
+  GROQ_MODEL: z.string().default('llama-3.1-8b-instant'),
+  HF_TOKEN: z.string().optional(),
+  HF_MODEL: z.string().default('meta-llama/Meta-Llama-3-8B-Instruct'),
+  AI_TIMEOUT_MS: z.coerce.number().default(60_000),
+  AI_NOTIFY_DEDUPE_HOURS: z.coerce.number().default(6),
+
   OLLAMA_URL: z.string().default('http://127.0.0.1:11434'),
   OLLAMA_MODEL: z.string().default('qwen2.5:7b'),
+
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().optional(),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
 
   OUTBOX_POLL_MS: z.coerce.number().default(3000),
   OUTBOX_BATCH: z.coerce.number().default(20),
@@ -63,6 +77,8 @@ export type Env = z.infer<typeof envSchema> & {
   hasKafka: boolean;
   hasOpenSearch: boolean;
   hasWhatsApp: boolean;
+  hasGroq: boolean;
+  hasHuggingFace: boolean;
 };
 
 function buildDatabaseUrl(raw: z.infer<typeof envSchema>): string | undefined {
@@ -92,4 +108,6 @@ export const env: Env = {
       parsed.WHATSAPP_PHONE_NUMBER_ID &&
       parsed.WHATSAPP_TEMPLATE_NAME
   ),
+  hasGroq: Boolean(parsed.GROQ_API_KEY),
+  hasHuggingFace: Boolean(parsed.HF_TOKEN),
 };

@@ -23,6 +23,7 @@ import { CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   adjustAdminStock,
+  clearAdminCatalog,
   createAdminProduct,
   deleteAdminProduct,
   fetchAdminProducts,
@@ -139,13 +140,17 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
   };
 
   const handleClearCatalog = async () => {
+    if (
+      !window.confirm(
+        'Clear the entire catalog? Products will be hidden from customers and merchant inventory.'
+      )
+    ) {
+      return;
+    }
     try {
-      const uniqueIds = Array.from(new Set(products.map((p) => p.id.split(':')[0])));
-      for (const id of uniqueIds) {
-        await deleteAdminProduct(id);
-      }
+      const result = await clearAdminCatalog();
       await refresh();
-      showToast('Cleared catalog inventory.');
+      showToast(`Cleared ${result.cleared} products from catalog.`);
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to clear catalog');
     }

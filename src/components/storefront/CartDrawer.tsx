@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -8,122 +8,51 @@ import {
   Sparkles,
   ShieldCheck,
   AlertTriangle,
-  CheckCircle2,
   ShoppingBag,
+  MapPin,
+  ArrowRight,
 } from 'lucide-react';
-import type { Product as StorefrontProduct } from '../../data/products';
-import { api, ApiError } from '../../lib/api';
+import { CityName, MultiCityProduct } from '../../lib/storefrontCatalog';
+import { CartItemLine } from './CheckoutAndRescueView';
+import { getStockBadgeMeta } from './ProductDetailView';
 
-export interface CartLine {
-  product: StorefrontProduct;
-  quantity: number;
-}
+export type CartLine = CartItemLine;
 
 interface CartDrawerProps {
   open: boolean;
   onClose: () => void;
-  lines: CartLine[];
-  city: string;
+  city: CityName;
+  lines: CartItemLine[];
+  catalog: MultiCityProduct[];
   onUpdateQty: (productId: string, quantity: number) => void;
   onRemove: (productId: string) => void;
-  onReplace: (unavailableId: string, replacement: StorefrontProduct) => void;
   onClear: () => void;
-  onRefreshCatalog?: () => void;
+  onProceedToCheckout: (simulateConflict?: boolean) => void;
 }
-
-type Alt = {
-  id: string;
-  name: string;
-  brand: string;
-  price: number;
-  imageUrl: string;
-  stock: number;
-  reason: string;
-  isDeadStock?: boolean;
-};
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
   open,
   onClose,
-  lines,
   city,
+  lines,
+  catalog,
   onUpdateQty,
   onRemove,
-  onReplace,
   onClear,
-  onRefreshCatalog,
+  onProceedToCheckout,
 }) => {
-  const [checkoutStep, setCheckoutStep] = useState<'cart' | 'rescue' | 'done'>('cart');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [orderId, setOrderId] = useState<string | null>(null);
-  const [alts, setAlts] = useState<Record<string, Alt[]>>({});
+  const subtotal = lines.reduce(
+    (sum, line) => sum + line.product.price * line.quantity,
+    0
+  );
+  const totalCount = lines.reduce((sum, line) => sum + line.quantity, 0);
 
-  const conflicts = lines.filter((l) => l.quantity > l.product.stock || !l.product.inStock);
-  const subtotal = lines.reduce((s, l) => s + l.product.price * l.quantity, 0);
-  const shipping = lines.length ? 99 : 0;
-
-  useEffect(() => {
-    if (!open) {
-      setCheckoutStep('cart');
-      setError(null);
-      setOrderId(null);
-    }
-  }, [open]);
-
-  const loadRescue = async (productIds: string[]) => {
-    const next: Record<string, Alt[]> = {};
-    for (const id of productIds) {
-      try {
-        const res = await api<{ alternatives: Alt[] }>('/api/rescue/suggestions', {
-          method: 'POST',
-          body: JSON.stringify({ productId: id, city }),
-        });
-        next[id] = res.alternatives || [];
-      } catch {
-        next[id] = [];
-      }
-    }
-    setAlts(next);
-  };
-
-  const handleCheckout = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const payload = {
-        city,
-        lines: lines.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
-      };
-      await api('/api/cart/validate', { method: 'POST', body: JSON.stringify(payload) });
-      const result = await api<{ order: { id: string } }>('/api/orders', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-      setOrderId(result.order.id);
-      setCheckoutStep('done');
-      onClear();
-      onRefreshCatalog?.();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setCheckoutStep('rescue');
-        const ids = conflicts.length
-          ? conflicts.map((c) => c.product.id)
-          : lines.map((l) => l.product.id);
-        await loadRescue(ids);
-        setError('Stock conflict — choose a Smart Basket Rescue swap');
-      } else {
-        setError(err instanceof Error ? err.message : 'Checkout failed');
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const closeAll = () => {
-    setCheckoutStep('cart');
-    onClose();
-  };
+  const hasCityConflict = lines.some((line) => {
+    const fresh =
+      catalog.find((p) => p.id === line.product.id) || line.product;
+    const avail = fresh.cityStock[city] ?? 0;
+    return avail < line.quantity || avail <= 0;
+  });
 
   return (
     <AnimatePresence>
@@ -131,250 +60,238 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         <div className="fixed inset-0 z-50 flex justify-end">
           <motion.button
             type="button"
-            aria-label="Close cart"
+            aria-label="Close cart drawer"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-[#101413]/50 backdrop-blur-sm"
-            onClick={closeAll}
+            className="absolute inset-0 bg-[#101413]/50 backdrop-blur-xs"
+            onClick={onClose}
           />
           <motion.aside
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 28, stiffness: 280 }}
-            className="relative h-full w-full max-w-md bg-[#F8F8F3] shadow-2xl border-l border-[#101413]/10 flex flex-col"
+            className="relative h-full w-full max-w-md bg-[#F8F8F3] shadow-2xl border-l border-[#E8EBE7] flex flex-col"
           >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-[#101413]/8">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-5 bg-white border-b border-[#E8EBE7]">
               <div>
-                <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#65B99B]">
-                  {checkoutStep === 'rescue'
-                    ? 'Smart Basket Rescue'
-                    : checkoutStep === 'done'
-                      ? 'Order Confirmed'
-                      : 'Your Basket'}
-                </p>
-                <h2 className="font-display font-black text-lg text-[#0A2540]">
-                  {checkoutStep === 'done'
-                    ? 'All set'
-                    : `${lines.length} item${lines.length === 1 ? '' : 's'}`}
+                <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[#064E36]">
+                  <MapPin className="w-3 h-3" />
+                  {city} Fulfillment Hub
+                </div>
+                <h2 className="font-display font-black text-xl text-[#0A2540] mt-0.5">
+                  Your Basket ({totalCount} {totalCount === 1 ? 'Item' : 'Items'})
                 </h2>
               </div>
-              <button
-                type="button"
-                onClick={closeAll}
-                className="p-2 rounded-xl hover:bg-white border border-transparent hover:border-[#101413]/10 cursor-pointer"
-              >
-                <X className="w-4 h-4 text-[#0A2540]" />
-              </button>
-            </div>
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-3">
-              {error && (
-                <div className="rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-semibold p-3">
-                  {error}
-                </div>
-              )}
-
-              {checkoutStep === 'done' && (
-                <div className="rounded-2xl bg-white border border-[#C8E8D9] p-6 text-center">
-                  <CheckCircle2 className="w-10 h-10 text-[#65B99B] mx-auto mb-3" />
-                  <p className="font-display font-bold text-[#0A2540]">Order authorized</p>
-                  <p className="text-xs text-[#101413]/60 mt-1">
-                    Order {orderId?.slice(0, 8)}… saved in Aiven PostgreSQL. Inventory decremented
-                    atomically.
-                  </p>
-                </div>
-              )}
-
-              {checkoutStep === 'cart' && lines.length === 0 && (
-                <div className="rounded-2xl border border-dashed border-[#101413]/15 bg-white p-8 text-center">
-                  <ShoppingBag className="w-8 h-8 text-[#65B99B] mx-auto mb-2" />
-                  <p className="text-sm font-bold text-[#0A2540]">Basket is empty</p>
-                </div>
-              )}
-
-              {checkoutStep === 'cart' &&
-                lines.map((line) => {
-                  const blocked = line.quantity > line.product.stock || !line.product.inStock;
-                  return (
-                    <div
-                      key={line.product.id}
-                      className={`rounded-2xl bg-white border p-3.5 ${
-                        blocked ? 'border-red-200 bg-red-50/40' : 'border-[#101413]/8'
-                      }`}
-                    >
-                      <div className="flex gap-3">
-                        <img
-                          src={line.product.image || ''}
-                          alt={line.product.name}
-                          className="w-16 h-16 rounded-xl object-cover bg-[#EAF4EC]"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-bold text-[#0A2540] truncate">
-                            {line.product.name}
-                          </p>
-                          <p className="text-[10px] text-[#101413]/50">
-                            {city} · {line.product.stock} available
-                          </p>
-                          <p className="text-sm font-extrabold text-[#0A2540] mt-1">
-                            ₹{(line.product.price * line.quantity).toLocaleString('en-IN')}
-                          </p>
-                          {blocked && (
-                            <p className="text-[10px] font-bold text-red-600 mt-1 flex items-center gap-1">
-                              <AlertTriangle className="w-3 h-3" /> Stock conflict
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="mt-3 flex items-center justify-between">
-                        <div className="inline-flex items-center gap-1 rounded-xl bg-[#FAF9F5] border border-[#E8EBE7] p-0.5">
-                          <button
-                            type="button"
-                            className="p-1.5 rounded-lg hover:bg-white cursor-pointer"
-                            onClick={() => onUpdateQty(line.product.id, line.quantity - 1)}
-                          >
-                            <Minus className="w-3.5 h-3.5" />
-                          </button>
-                          <span className="w-7 text-center text-xs font-bold">{line.quantity}</span>
-                          <button
-                            type="button"
-                            className="p-1.5 rounded-lg hover:bg-white cursor-pointer"
-                            onClick={() =>
-                              onUpdateQty(
-                                line.product.id,
-                                Math.min(line.quantity + 1, Math.max(line.product.stock, 1))
-                              )
-                            }
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => onRemove(line.product.id)}
-                          className="p-2 rounded-lg text-red-600 hover:bg-red-50 cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-
-              {checkoutStep === 'rescue' && (
-                <div className="space-y-4">
-                  <div className="rounded-2xl bg-[#0A2540] text-white p-4">
-                    <div className="flex items-center gap-2 text-[#65B99B] text-[10px] font-extrabold uppercase tracking-wider">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      Smart Basket Rescue
-                    </div>
-                    <p className="text-sm font-bold mt-1">
-                      Swap unavailable items (±20% price, same category, dead-stock boosted).
-                    </p>
-                  </div>
-                  {(conflicts.length ? conflicts : lines).map((line) => (
-                    <div
-                      key={line.product.id}
-                      className="rounded-2xl bg-white border border-red-200 p-4 space-y-3"
-                    >
-                      <p className="text-xs font-bold text-[#0A2540] line-through opacity-70">
-                        {line.product.name}
-                      </p>
-                      {(alts[line.product.id] || []).length === 0 ? (
-                        <p className="text-[11px] text-[#7C877F]">No in-stock alternatives.</p>
-                      ) : (
-                        (alts[line.product.id] || []).map((alt) => (
-                          <button
-                            key={alt.id}
-                            type="button"
-                            onClick={() => {
-                              onReplace(line.product.id, {
-                                id: alt.id,
-                                name: alt.name,
-                                brand: alt.brand,
-                                category: line.product.category,
-                                price: alt.price,
-                                image: alt.imageUrl,
-                                city,
-                                stock: alt.stock,
-                                inStock: alt.stock > 0,
-                                rating: 4.8,
-                                reviewsCount: 10,
-                              });
-                              setCheckoutStep('cart');
-                              setError(null);
-                            }}
-                            className="w-full flex items-center gap-3 p-2.5 rounded-xl border border-[#101413]/8 hover:border-[#65B99B] text-left cursor-pointer"
-                          >
-                            <img
-                              src={alt.imageUrl || ''}
-                              alt=""
-                              className="w-11 h-11 rounded-lg object-cover bg-[#EAF4EC]"
-                            />
-                            <div className="min-w-0 flex-1">
-                              <p className="text-[11px] font-bold text-[#0A2540] truncate">
-                                {alt.name}
-                              </p>
-                              <p className="text-[10px] text-[#101413]/55">{alt.reason}</p>
-                            </div>
-                            <span className="text-[10px] font-bold text-[#064E36] bg-[#DCEFE3] px-2 py-1 rounded-lg">
-                              Swap
-                            </span>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {checkoutStep !== 'done' && (
-              <div className="border-t border-[#101413]/8 p-5 space-y-3 bg-white/70">
-                <div className="flex justify-between text-xs text-[#101413]/70">
-                  <span>Subtotal</span>
-                  <span>₹{subtotal.toLocaleString('en-IN')}</span>
-                </div>
-                <div className="flex justify-between text-xs text-[#101413]/70">
-                  <span>Shipping</span>
-                  <span>₹{shipping.toLocaleString('en-IN')}</span>
-                </div>
-                <div className="flex justify-between font-display font-black text-[#0A2540]">
-                  <span>Total</span>
-                  <span>₹{(subtotal + shipping).toLocaleString('en-IN')}</span>
-                </div>
-
-                {checkoutStep === 'cart' ? (
+              <div className="flex items-center gap-2">
+                {lines.length > 0 && (
                   <button
                     type="button"
-                    disabled={lines.length === 0 || busy}
-                    onClick={handleCheckout}
-                    className="w-full py-3 rounded-2xl bg-[#0A2540] hover:bg-[#101413] disabled:opacity-40 text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+                    onClick={onClear}
+                    className="text-[11px] font-bold text-[#7C877F] hover:text-red-600 px-2.5 py-1 rounded-lg hover:bg-red-50 cursor-pointer transition-all"
                   >
-                    {busy ? (
-                      'Placing…'
-                    ) : conflicts.length > 0 ? (
-                      <>
-                        <Sparkles className="w-4 h-4 text-[#E8C86B]" />
-                        Checkout with Rescue
-                      </>
-                    ) : (
-                      <>
-                        <ShieldCheck className="w-4 h-4 text-[#65B99B]" />
-                        Place Order
-                      </>
-                    )}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setCheckoutStep('cart')}
-                    className="w-full py-3 rounded-2xl bg-[#DCEFE3] text-[#064E36] text-sm font-bold cursor-pointer"
-                  >
-                    Back to basket
+                    Clear all
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="p-2 rounded-full hover:bg-[#FAF9F5] border border-[#E8EBE7] cursor-pointer"
+                >
+                  <X className="w-4 h-4 text-[#0A2540]" />
+                </button>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-3.5">
+              {lines.length === 0 ? (
+                <div className="rounded-[24px] border border-dashed border-[#C8E8D9] bg-white p-10 text-center space-y-3 my-8">
+                  <div className="w-12 h-12 rounded-2xl bg-[#EAF4EC] text-[#064E36] flex items-center justify-center mx-auto">
+                    <ShoppingBag className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <p className="font-display font-black text-base text-[#0A2540]">
+                      Your {city} basket is empty
+                    </p>
+                    <p className="text-xs text-[#7C877F] mt-1 leading-relaxed">
+                      Explore deals in {city} and add items to test instant checkout or Smart Basket Rescue.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="mt-2 inline-flex items-center gap-1.5 px-5 py-2.5 rounded-full bg-[#064E36] text-white text-xs font-extrabold cursor-pointer"
+                  >
+                    Start Shopping
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {hasCityConflict && (
+                    <div className="rounded-2xl bg-[#F5EBCB] border border-[#E8C86B] p-3.5 flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-[#7A5800] shrink-0 mt-0.5" />
+                      <div className="text-xs text-[#7A5800]">
+                        <p className="font-extrabold">
+                          Stock Conflict in {city} Hub
+                        </p>
+                        <p className="text-[11px] mt-0.5 leading-relaxed">
+                          One or more items exceed available stock in {city}. Proceed to checkout to trigger <strong>Smart Basket Rescue</strong> (±20% alternatives).
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {lines.map((line) => {
+                    const fresh =
+                      catalog.find((p) => p.id === line.product.id) ||
+                      line.product;
+                    const cityStock = fresh.cityStock[city] ?? 0;
+                    const badge = getStockBadgeMeta(cityStock);
+                    const isConflict =
+                      cityStock <= 0 || line.quantity > cityStock;
+
+                    return (
+                      <div
+                        key={line.product.id}
+                        className={`rounded-2xl bg-white border p-4 transition-all ${
+                          isConflict
+                            ? 'border-[#E8C86B] bg-[#F5EBCB]/25'
+                            : 'border-[#E8EBE7]'
+                        }`}
+                      >
+                        <div className="flex gap-3.5">
+                          <img
+                            src={line.product.image}
+                            alt={line.product.name}
+                            className="w-16 h-16 rounded-xl object-contain bg-[#FAF9F5] border border-[#E8EBE7] p-1.5 shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-xs font-extrabold text-[#0A2540] line-clamp-1">
+                                {line.product.name}
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => onRemove(line.product.id)}
+                                className="text-[#7C877F] hover:text-red-600 p-1 cursor-pointer"
+                                title="Remove item"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            <div className="flex items-center gap-2 mt-1">
+                              <span
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-extrabold ${badge.pillClass}`}
+                              >
+                                <span
+                                  className={`w-1.5 h-1.5 rounded-full ${badge.dotClass}`}
+                                />
+                                {city}: {badge.label}
+                              </span>
+                            </div>
+
+                            <div className="mt-2.5 flex items-center justify-between">
+                              <div className="inline-flex items-center rounded-full bg-[#FAF9F5] border border-[#E8EBE7] p-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onUpdateQty(
+                                      line.product.id,
+                                      line.quantity - 1
+                                    )
+                                  }
+                                  className="p-1.5 rounded-full hover:bg-white cursor-pointer"
+                                >
+                                  <Minus className="w-3 h-3 text-[#0A2540]" />
+                                </button>
+                                <span className="w-7 text-center text-xs font-extrabold text-[#0A2540]">
+                                  {line.quantity}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onUpdateQty(
+                                      line.product.id,
+                                      Math.min(
+                                        line.quantity + 1,
+                                        Math.max(cityStock, 1)
+                                      )
+                                    )
+                                  }
+                                  disabled={
+                                    cityStock > 0 && line.quantity >= cityStock
+                                  }
+                                  className="p-1.5 rounded-full hover:bg-white disabled:opacity-40 cursor-pointer"
+                                >
+                                  <Plus className="w-3 h-3 text-[#0A2540]" />
+                                </button>
+                              </div>
+
+                              <p className="font-display font-black text-sm text-[#0A2540]">
+                                ₹
+                                {(
+                                  line.product.price * line.quantity
+                                ).toLocaleString('en-IN')}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+
+            {/* Footer */}
+            {lines.length > 0 && (
+              <div className="border-t border-[#E8EBE7] bg-white p-5 space-y-3.5">
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex justify-between text-[#7C877F]">
+                    <span>Subtotal ({totalCount} items)</span>
+                    <span className="font-bold text-[#0A2540]">
+                      ₹{subtotal.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-[#7C877F]">
+                    <span>{city} Hub Express Delivery</span>
+                    <span className="font-extrabold text-[#064E36]">FREE</span>
+                  </div>
+                  <div className="flex justify-between items-baseline pt-2 border-t border-[#E8EBE7]">
+                    <span className="font-display font-black text-sm text-[#0A2540]">
+                      Total
+                    </span>
+                    <span className="font-display font-black text-xl text-[#0A2540]">
+                      ₹{subtotal.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => onProceedToCheckout(false)}
+                    className="w-full py-3.5 px-5 rounded-full bg-[#0A2540] hover:bg-[#101413] text-white text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-[#65B99B]" />
+                    Proceed to Checkout
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onProceedToCheckout(true)}
+                    className="w-full py-2.5 px-4 rounded-full bg-[#F5EBCB] hover:bg-[#E8D58A] text-[#0A2540] border border-[#E8C86B] text-[11px] font-extrabold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-[#7A5800]" />
+                    Demo: Checkout & Simulate Stock Conflict (Rescue)
+                  </button>
+                </div>
               </div>
             )}
           </motion.aside>

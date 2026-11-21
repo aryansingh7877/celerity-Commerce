@@ -174,8 +174,8 @@ export async function importProductRows(
     for (const row of valid) {
       const storeId = await getStoreIdByCity(client, row.city);
       const prod = await client.query(
-        `INSERT INTO products (sku, name, brand, category, description, price, offer_price, image_url)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO products (sku, name, brand, category, description, price, offer_price, image_url, active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
          ON CONFLICT (sku) DO UPDATE SET
            name = EXCLUDED.name,
            brand = EXCLUDED.brand,
@@ -184,6 +184,7 @@ export async function importProductRows(
            price = EXCLUDED.price,
            offer_price = EXCLUDED.offer_price,
            image_url = COALESCE(NULLIF(EXCLUDED.image_url, ''), products.image_url),
+           active = true,
            updated_at = now()
          RETURNING *`,
         [
@@ -240,8 +241,9 @@ export async function importProductRows(
           category: row.category,
           description: row.description,
           price: Number(row.offer_price ?? row.price),
+          imageUrl: row.image_url || '',
           specs: row.specs,
-          active: row.active,
+          active: row.active !== false,
         }).catch(() => undefined);
       }
     }

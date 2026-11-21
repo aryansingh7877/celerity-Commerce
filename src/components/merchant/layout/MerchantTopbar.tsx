@@ -72,7 +72,27 @@ export const MerchantTopbar: React.FC<MerchantTopbarProps> = ({
     },
     locations: {
       title: 'Store Locations',
-      subtitle: 'Bangalore, Mumbai & Delhi multi-hub distribution centers',
+      subtitle: 'Bengaluru, Mumbai & Delhi multi-hub distribution centers',
+    },
+    orders: {
+      title: 'Orders',
+      subtitle: 'Customer orders from Aiven PostgreSQL',
+    },
+    deadstock: {
+      title: 'Dead Stock',
+      subtitle: 'Deterministic inactivity classification + optional Qwen explanation',
+    },
+    suppliers: {
+      title: 'Suppliers',
+      subtitle: 'Supplier contacts and WhatsApp numbers',
+    },
+    restock: {
+      title: 'Restock Requests',
+      subtitle: 'Low-stock and out-of-stock replenishment desk',
+    },
+    notifications: {
+      title: 'Notifications',
+      subtitle: 'WhatsApp supplier notification history and retries',
     },
     settings: {
       title: 'Merchant Settings',
@@ -82,6 +102,7 @@ export const MerchantTopbar: React.FC<MerchantTopbarProps> = ({
 
   const locations: StoreLocation[] = [
     'All Locations',
+    'Bengaluru',
     'Bangalore',
     'Mumbai',
     'Delhi',

@@ -188,6 +188,7 @@ export const SuppliersPage: React.FC = () => {
   const [suppliers, setSuppliers] = useState<Array<Record<string, unknown>>>([]);
   const [name, setName] = useState('');
   const [whatsapp, setWhatsapp] = useState('');
+  const [msg, setMsg] = useState<string | null>(null);
   const refresh = () =>
     api<{ suppliers: Array<Record<string, unknown>> }>('/api/admin/suppliers')
       .then((r) => setSuppliers(r.suppliers || []))
@@ -196,17 +197,37 @@ export const SuppliersPage: React.FC = () => {
     refresh();
   }, []);
   const add = async () => {
-    await api('/api/admin/suppliers', {
-      method: 'POST',
-      body: JSON.stringify({ name, whatsappE164: whatsapp || undefined }),
-    });
-    setName('');
-    setWhatsapp('');
-    refresh();
+    setMsg(null);
+    if (!name.trim()) {
+      setMsg('Supplier name is required');
+      return;
+    }
+    if (!whatsapp.trim()) {
+      setMsg('WhatsApp number required (E.164, e.g. +9198xxxxxxx) — used for stock-out alerts');
+      return;
+    }
+    try {
+      await api('/api/admin/suppliers', {
+        method: 'POST',
+        body: JSON.stringify({ name: name.trim(), whatsappE164: whatsapp.trim() }),
+      });
+      setName('');
+      setWhatsapp('');
+      setMsg('Supplier saved. They will get WhatsApp when stock hits 0 or goes low.');
+      refresh();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Failed to add supplier');
+    }
   };
   return (
     <div className="space-y-4">
-      <h1 className="font-display text-2xl font-black text-[#0A2540]">Suppliers</h1>
+      <div>
+        <h1 className="font-display text-2xl font-black text-[#0A2540]">Suppliers</h1>
+        <p className="text-xs text-[#7C877F] mt-1">
+          When a product runs out (or goes below reorder threshold), Celerity WhatsApps this contact
+          automatically — checkout and admin stock edits both trigger it.
+        </p>
+      </div>
       <div className="flex flex-wrap gap-2">
         <input
           value={name}
@@ -217,7 +238,7 @@ export const SuppliersPage: React.FC = () => {
         <input
           value={whatsapp}
           onChange={(e) => setWhatsapp(e.target.value)}
-          placeholder="+91…"
+          placeholder="+9198xxxxxxxx"
           className="px-3 py-2 rounded-xl border border-[#E8EBE7] text-sm"
         />
         <button
@@ -228,6 +249,7 @@ export const SuppliersPage: React.FC = () => {
           Add
         </button>
       </div>
+      {msg && <p className="text-xs text-[#064E36]">{msg}</p>}
       <ul className="space-y-2">
         {suppliers.map((s) => (
           <li key={String(s.id)} className="rounded-xl bg-white border border-[#E8EBE7] p-3 text-sm">

@@ -5,6 +5,8 @@ import { asyncHandler, HttpError } from '../middleware/errors.js';
 import { createOrder, validateCart } from '../services/checkout.js';
 import { findAlternatives } from '../services/rescue.js';
 import { getPool } from '../db/pool.js';
+import { getStoreIdByCity } from '../services/inventory.js';
+import { notifySupplierOnStockDepletion } from '../services/supplierNotify.js';
 
 const lineSchema = z.object({
   productId: z.string().uuid(),
@@ -50,6 +52,34 @@ ordersRouter.post(
         lines: body.lines,
         shipping: body.shipping,
       });
+
+      // After checkout, notify suppliers for any line that is now OOS / low
+      try {
+        const pool = getPool();
+        const storeId = await getStoreIdByCity(pool, city);
+        for (const line of body.lines) {
+          const inv = await pool.query<{ stock: number; reorder_threshold: number }>(
+            `SELECT stock, reorder_threshold FROM inventory
+             WHERE product_id = $1 AND store_id = $2`,
+            [line.productId, storeId]
+          );
+          const row = inv.rows[0];
+          if (!row) continue;
+          if (row.stock === 0 || row.stock <= row.reorder_threshold) {
+            await notifySupplierOnStockDepletion({
+              productId: line.productId,
+              storeId,
+              city,
+              stock: row.stock,
+              reorderThreshold: row.reorder_threshold,
+              reason: row.stock === 0 ? 'out_of_stock' : 'low_stock',
+            }).catch(() => undefined);
+          }
+        }
+      } catch (notifyErr) {
+        console.error('[checkout] supplier notify skipped', notifyErr);
+      }
+
       res.status(201).json(result);
     } catch (err) {
       if (err instanceof HttpError && err.status === 409) {

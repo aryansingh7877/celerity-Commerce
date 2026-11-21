@@ -141,7 +141,7 @@ async function handleLowStock(evt: {
       providerResponse: result.response,
     });
     await pool.query(
-      `UPDATE restock_requests SET whatsapp_status = 'submitted', status = 'contacted', updated_at = now() WHERE id = $1`,
+      `UPDATE restock_requests SET whatsapp_status = 'submitted', updated_at = now() WHERE id = $1`,
       [restockId]
     );
   } else {

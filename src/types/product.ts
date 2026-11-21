@@ -1,0 +1,50 @@
+export type ProductCategory = 'Headphones' | 'Earphones' | 'Laptops' | 'Smartphones' | string;
+
+export type StockStatus = 'in_stock' | 'low_stock' | 'out_of_stock';
+
+export type StoreLocation = 'Bangalore' | 'Mumbai' | 'Delhi' | 'All Locations';
+
+export interface Product {
+  id: string;
+  name: string;
+  sku: string;
+  category: ProductCategory;
+  price: number;
+  stock: number;
+  location: 'Bangalore' | 'Mumbai' | 'Delhi';
+  image: string;
+  description: string;
+  createdAt: string;
+  lastUpdated: string;
+}
+
+export type MerchantTab = 
+  | 'overview'
+  | 'inventory'
+  | 'products'
+  | 'categories'
+  | 'stock'
+  | 'locations'
+  | 'settings';
+
+export interface CategorySummary {
+  name: string;
+  productCount: number;
+  totalStock: number;
+  totalValue: number;
+  iconName: string;
+  accentColor: string;
+  bgLight: string;
+}
+
+export interface HubLocationSummary {
+  city: 'Bangalore' | 'Mumbai' | 'Delhi';
+  name: string;
+  address: string;
+  manager: string;
+  phone: string;
+  activeSkus: number;
+  totalUnits: number;
+  status: 'Optimal' | 'Rebalancing' | 'High Demand';
+  fulfillmentRate: number;
+}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en" class="scroll-smooth antialiased">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/celerity-logo.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Celerity Commerce — Never Lose a Sale to an Empty Shelf</title>
+    <meta name="description" content="Smart Basket Rescue keeps multi-city commerce customers moving when inventory changes, automatically finding validated alternatives without abandoning checkout." />
+
+    <!-- Google Fonts: Manrope, Inter, Newsreader italic -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Newsreader:ital,opsz,wght@1,6..72,400;1,6..72,500;1,6..72,600&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-[#F8F8F3] text-[#101413] selection:bg-[#65B99B] selection:text-white overflow-x-hidden font-sans">
+    <!-- SVG Noise Filter for Tactile Analog Grain -->
+    <svg class="pointer-events-none fixed inset-0 z-50 h-full w-full opacity-[0.045] mix-blend-overlay" aria-hidden="true">
+      <filter id="celerity-grain">
+        <feTurbulence type="fractalNoise" baseFrequency="0.75" numOctaves="3" stitchTiles="stitch" />
+        <feColorMatrix type="saturate" values="0" />
+      </filter>
+      <rect width="100%" height="100%" filter="url(#celerity-grain)" />
+    </svg>
+
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

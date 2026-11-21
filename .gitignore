@@ -3,6 +3,12 @@
 .env.local
 .env.*.local
 
+# Local tooling / catalog artifacts
+.venv-xlsx/
+catalog_images/
+*.xlsx
+.supabase/
+
 # Logs
 logs
 *.log

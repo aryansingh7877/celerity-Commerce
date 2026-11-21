@@ -14,24 +14,23 @@ export const CategoryDistributionChart: React.FC<CategoryDistributionChartProps>
 }) => {
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
-  // Group stock and product counts by category
-  const categories = ['Headphones', 'Earphones', 'Laptops', 'Smartphones'];
+  const fallbackCategories = ['Headphones', 'Earphones', 'Laptops', 'Smartphones'];
+  const categories = Array.from(
+    new Set([...fallbackCategories, ...products.map((p) => p.category).filter(Boolean)])
+  );
 
-  const categoryData = categories.map((cat) => {
-    const items = products.filter((p) => p.category === cat);
-    const totalStock = items.reduce((sum, item) => sum + item.stock, 0);
-    const totalValue = items.reduce((sum, item) => sum + item.stock * item.price, 0);
-
-    return {
-      category: cat,
-      count: items.length,
-      stock: totalStock,
-      value: totalValue,
-    };
-  });
+  const categoryData = categories
+    .map((cat) => {
+      const items = products.filter((p) => p.category === cat);
+      const totalStock = items.reduce((sum, item) => sum + item.stock, 0);
+      const totalValue = items.reduce((sum, item) => sum + item.stock * item.price, 0);
+      return { category: cat, count: items.length, stock: totalStock, value: totalValue };
+    })
+    .filter((c) => c.count > 0);
 
   const totalAllStock = categoryData.reduce((acc, c) => acc + c.stock, 0) || 1;
   const maxStock = Math.max(...categoryData.map((c) => c.stock), 1);
+  const topCategory = [...categoryData].sort((a, b) => b.stock - a.stock)[0];
 
   const colors: Record<string, { bar: string; light: string; text: string; bgBadge: string }> = {
     Headphones: {
@@ -81,7 +80,10 @@ export const CategoryDistributionChart: React.FC<CategoryDistributionChartProps>
         {/* Total Stock Summary Pill */}
         <div className="flex items-center gap-3">
           <div className="px-3.5 py-1.5 rounded-xl bg-[#FAF9F5] border border-[#E8EBE7] text-xs font-semibold text-[#202A24]">
-            Total Allocated: <span className="font-bold text-[#064E36]">{totalAllStock} Units</span>
+            Total Allocated:{' '}
+            <span className="font-bold text-[#064E36]">
+              {categoryData.length === 0 ? 0 : totalAllStock} Units
+            </span>
           </div>
         </div>
       </div>
@@ -90,6 +92,11 @@ export const CategoryDistributionChart: React.FC<CategoryDistributionChartProps>
       <div className="pt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
         {/* Left: Bar Visualizer */}
         <div className="lg:col-span-8 space-y-4">
+          {categoryData.length === 0 && (
+            <div className="rounded-xl border border-dashed border-[#E8EBE7] bg-[#FAF9F5] px-4 py-8 text-center text-xs font-semibold text-[#7C877F]">
+              Upload a catalog to unlock category distribution analytics.
+            </div>
+          )}
           {categoryData.map((catItem) => {
             const percentageOfTotal = Math.round((catItem.stock / totalAllStock) * 100);
             const barWidthPercent = Math.max(8, Math.round((catItem.stock / maxStock) * 100));
@@ -184,7 +191,11 @@ export const CategoryDistributionChart: React.FC<CategoryDistributionChartProps>
 
           <div className="pt-2 text-[11px] text-[#7C877F] flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-[#064E36]" />
-            <span>Highest volume: <strong>Headphones (58 units)</strong></span>
+            <span>
+              {topCategory
+                ? <>Highest volume: <strong>{topCategory.category} ({topCategory.stock} units)</strong></>
+                : 'No category volume yet'}
+            </span>
           </div>
         </div>
       </div>

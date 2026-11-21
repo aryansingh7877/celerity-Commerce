@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Product, MerchantTab, StoreLocation } from '../../types/product';
-import { INITIAL_PRODUCTS } from '../../data/mockProducts';
+import { loadCatalog, saveCatalog } from '../../lib/merchantInventoryStore';
 import { MerchantSidebar } from './layout/MerchantSidebar';
 import { MerchantTopbar } from './layout/MerchantTopbar';
 import { OverviewPage } from './pages/Overview';
@@ -13,7 +13,7 @@ import { SettingsPage } from './pages/Settings';
 import { AddProductModal } from './dashboard/AddProductModal';
 import { EditProductModal } from './dashboard/EditProductModal';
 import { DeleteConfirmation } from './dashboard/DeleteConfirmation';
-import { CheckCircle2, AlertCircle } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface MerchantDashboardProps {
@@ -29,15 +29,17 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
   merchantName = 'Aryan Singh',
   merchantEmail = 'aryansingh787769@gmail.com',
 }) => {
-  // ── 1. Core State ──
-  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
+  // ── 1. Core State — hydrate from saved catalog (empty until first upload) ──
+  const [products, setProducts] = useState<Product[]>(() => loadCatalog());
   const [currentTab, setCurrentTab] = useState<MerchantTab>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLocation, setSelectedLocation] = useState<StoreLocation>('All Locations');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const skipFirstSave = useRef(true);
 
   // ── 2. Modals State ──
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [addModalPreferBulk, setAddModalPreferBulk] = useState(true);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [productToEdit, setProductToEdit] = useState<Product | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -50,6 +52,18 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
   };
+
+  // Persist inventory after every change (upload, edit, stock, delete)
+  useEffect(() => {
+    if (skipFirstSave.current) {
+      skipFirstSave.current = false;
+      return;
+    }
+    const result = saveCatalog(products);
+    if (!result.ok && result.error) {
+      showToast(result.error);
+    }
+  }, [products]);
 
   // ── 4. Stock Adjustments (Prevent Negative Quantities) ──
   const handleAdjustStock = (productId: string, delta: number) => {
@@ -80,7 +94,12 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     showToast(`Added "${created.name}" to inventory.`);
   };
 
-  // ── 5b. Add Bulk Imported Products (from CSV / Excel / PDF) ──
+  const openAddModal = (preferBulk = products.length === 0) => {
+    setAddModalPreferBulk(preferBulk);
+    setIsAddModalOpen(true);
+  };
+
+  // ── 5b. Bulk import replaces empty catalog / merges into existing ──
   const handleAddBulkProducts = (newProds: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>[]) => {
     const createdList: Product[] = newProds.map((item, idx) => ({
       ...item,
@@ -88,8 +107,10 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
       createdAt: new Date().toISOString(),
       lastUpdated: new Date().toISOString(),
     }));
-    setProducts((prev) => [...createdList, ...prev]);
-    showToast(`Successfully imported ${createdList.length} products to inventory.`);
+    setProducts((prev) => (prev.length === 0 ? createdList : [...createdList, ...prev]));
+    setCurrentTab('overview');
+    setIsAddModalOpen(false);
+    showToast(`Saved ${createdList.length} products — reload will keep this catalog.`);
   };
 
   // ── 6. Edit Product ──
@@ -175,7 +196,7 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
           {currentTab === 'overview' && (
             <OverviewPage
               products={products}
-              onOpenAddProduct={() => setIsAddModalOpen(true)}
+              onOpenAddProduct={() => openAddModal(true)}
               onNavigateTab={setCurrentTab}
               onEditProduct={handleOpenEdit}
               onDeleteProduct={handleOpenDelete}
@@ -187,7 +208,7 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
           {currentTab === 'inventory' && (
             <InventoryPage
               products={products}
-              onOpenAddProduct={() => setIsAddModalOpen(true)}
+              onOpenAddProduct={() => openAddModal(products.length === 0)}
               onEditProduct={handleOpenEdit}
               onDeleteProduct={handleOpenDelete}
               onAdjustStock={handleAdjustStock}
@@ -201,7 +222,7 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
           {currentTab === 'products' && (
             <ProductsPage
               products={products}
-              onOpenAddProduct={() => setIsAddModalOpen(true)}
+              onOpenAddProduct={() => openAddModal(products.length === 0)}
               onEditProduct={handleOpenEdit}
               onDeleteProduct={handleOpenDelete}
               onAdjustStock={handleAdjustStock}
@@ -256,6 +277,7 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
         onClose={() => setIsAddModalOpen(false)}
         onAddProduct={handleAddProduct}
         onAddBulkProducts={handleAddBulkProducts}
+        preferBulkMode={addModalPreferBulk}
       />
 
       <EditProductModal

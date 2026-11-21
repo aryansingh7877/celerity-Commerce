@@ -23,7 +23,6 @@ import {
   getBasketItems, 
   rescueBasketItem, 
   getRescueHistory,
-  getProducts
 } from '../lib/supabase/database';
 import { updateProfile } from '../lib/supabase/auth';
 import { 
@@ -32,6 +31,8 @@ import {
   DatabaseRescueEvent, 
   DatabaseProduct 
 } from '../lib/supabase/client';
+import { loadCatalog } from '../lib/merchantInventoryStore';
+import type { Product as MerchantProduct } from '../types/product';
 
 export const CustomerDashboard: React.FC = () => {
   const { user, profile, isDashboardOpen, closeDashboard, signOut, refreshProfile } = useAuth();
@@ -42,6 +43,7 @@ export const CustomerDashboard: React.FC = () => {
   const [basketItems, setBasketItems] = useState<DatabaseBasketItem[]>([]);
   const [rescueHistory, setRescueHistory] = useState<DatabaseRescueEvent[]>([]);
   const [catalogProducts, setCatalogProducts] = useState<DatabaseProduct[]>([]);
+  const [merchantCatalog, setMerchantCatalog] = useState<MerchantProduct[]>([]);
   const [loadingData, setLoadingData] = useState<boolean>(true);
 
   // Profile Edit State
@@ -66,60 +68,29 @@ export const CustomerDashboard: React.FC = () => {
       const currentBasket = await getOrCreateUserBasket(user.id);
       setBasket(currentBasket);
 
-      if (currentBasket) {
-        // 2. Fetch items for this basket
-        const items = await getBasketItems(currentBasket.id);
-        
-        // If the database basket is empty, let's provide realistic demo seed items in state
-        if (items.length === 0) {
-          setBasketItems([
-            {
-              id: 'item-demo-1',
-              basket_id: currentBasket.id,
-              product_id: 'a1000000-0000-0000-0000-000000000001',
-              quantity: 1,
-              price: 35.00,
-              created_at: new Date().toISOString(),
-              product: {
-                id: 'a1000000-0000-0000-0000-000000000001',
-                name: 'Resurrection Aromatique Hand Balm 75ml',
-                description: 'Rich moisturizing botanicals',
-                category: 'Personal Care',
-                price: 35.00,
-                image_url: 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=600&q=80',
-                created_at: new Date().toISOString()
-              }
-            },
-            {
-              id: 'item-demo-2',
-              basket_id: currentBasket.id,
-              product_id: 'a1000000-0000-0000-0000-000000000002',
-              quantity: 1,
-              price: 18.50,
-              created_at: new Date().toISOString(),
-              product: {
-                id: 'a1000000-0000-0000-0000-000000000002',
-                name: 'Yirgacheffe Single-Origin Cold Brew 750ml',
-                description: 'High-altitude Ethiopian slow extraction',
-                category: 'Specialty Beverage',
-                price: 18.50,
-                image_url: 'https://images.unsplash.com/photo-1517701550927-30cf4ba1dba5?auto=format&fit=crop&w=600&q=80',
-                created_at: new Date().toISOString()
-              }
-            }
-          ]);
-        } else {
-          setBasketItems(items);
-        }
+      // Admin-uploaded catalog only (no demo seed products)
+      const uploaded = loadCatalog();
+      setMerchantCatalog(uploaded);
+      setCatalogProducts(
+        uploaded.map((p) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          category: p.category,
+          price: p.price,
+          image_url: p.image,
+          created_at: p.createdAt,
+        }))
+      );
 
-        // 3. Fetch rescue history
+      if (currentBasket) {
+        const items = await getBasketItems(currentBasket.id);
+        // Keep real basket rows only — never inject demo lines
+        setBasketItems(items);
+
         const history = await getRescueHistory(currentBasket.id);
         setRescueHistory(history);
       }
-
-      // 4. Fetch available catalog products
-      const products = await getProducts();
-      setCatalogProducts(products);
 
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
@@ -293,7 +264,7 @@ export const CustomerDashboard: React.FC = () => {
                     <div className="text-right flex-shrink-0">
                       <span className="text-xs text-[#101413]/60 block">Verified Subtotal</span>
                       <span className="font-display text-xl font-black text-[#0A2540]">
-                        ${subtotal.toFixed(2)}
+                        ₹{subtotal.toLocaleString('en-IN')}
                       </span>
                     </div>
                   </div>
@@ -304,8 +275,26 @@ export const CustomerDashboard: React.FC = () => {
                       Current Basket SKUs ({basketItems.length})
                     </h4>
 
+                    {basketItems.length === 0 && (
+                      <div className="p-5 rounded-2xl border border-dashed border-[#101413]/15 bg-white text-center">
+                        <p className="text-xs font-semibold text-[#0A2540]">Basket is empty</p>
+                        <p className="text-[11px] text-[#101413]/55 mt-1">
+                          {merchantCatalog.length === 0
+                            ? 'No merchant catalog yet — ask admin to upload Excel inventory.'
+                            : 'Add items from the live merchant catalog below.'}
+                        </p>
+                      </div>
+                    )}
+
                     {basketItems.map((item) => {
-                      const isUnavailable = item.product?.name.includes('Yirgacheffe');
+                      const merchantMatch = merchantCatalog.find((p) => p.id === item.product_id);
+                      const isUnavailable = merchantMatch ? merchantMatch.stock <= 0 : false;
+                      const alt = merchantCatalog.find(
+                        (p) =>
+                          p.id !== item.product_id &&
+                          p.stock > 0 &&
+                          p.category === (item.product?.category || merchantMatch?.category)
+                      );
 
                       return (
                         <div 
@@ -319,21 +308,21 @@ export const CustomerDashboard: React.FC = () => {
                           <div className="flex items-center justify-between gap-4">
                             <div className="flex items-center gap-3.5">
                               <img 
-                                src={item.product?.image_url || 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=120&q=80'} 
+                                src={item.product?.image_url || merchantMatch?.image || ''} 
                                 alt={item.product?.name || 'Product'} 
-                                className="w-12 h-12 rounded-xl object-cover border border-[#101413]/10"
+                                className="w-12 h-12 rounded-xl object-cover border border-[#101413]/10 bg-[#F8F8F3]"
                               />
                               <div>
                                 <h5 className={`text-xs font-bold text-[#0A2540] ${isUnavailable ? 'line-through text-[#101413]/60' : ''}`}>
-                                  {item.product?.name || 'Catalog Item'}
+                                  {item.product?.name || merchantMatch?.name || 'Catalog Item'}
                                 </h5>
                                 <div className="flex items-center gap-2 mt-0.5">
                                   <span className="text-[10px] text-[#101413]/50">
-                                    Qty: {item.quantity} · Category: {item.product?.category || 'General'}
+                                    Qty: {item.quantity} · {item.product?.category || merchantMatch?.category || 'General'}
                                   </span>
                                   {isUnavailable ? (
                                     <span className="text-[10px] font-bold text-red-600 bg-red-100 px-1.5 py-0.2 rounded">
-                                      0 Units in Midtown Hub
+                                      Out of stock
                                     </span>
                                   ) : (
                                     <span className="text-[10px] font-bold text-[#65B99B] bg-[#C8E8D9]/50 px-1.5 py-0.2 rounded">
@@ -346,19 +335,18 @@ export const CustomerDashboard: React.FC = () => {
 
                             <div className="text-right flex-shrink-0">
                               <span className="text-xs font-bold text-[#0A2540]">
-                                ${(item.price * item.quantity).toFixed(2)}
+                                ₹{(item.price * item.quantity).toLocaleString('en-IN')}
                               </span>
                             </div>
                           </div>
 
-                          {/* Trigger Rescue Banner if item is out of stock */}
-                          {isUnavailable && (
+                          {isUnavailable && alt && (
                             <div className="mt-3 pt-3 border-t border-red-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                               <div className="text-xs text-red-700">
-                                <strong>Smart Recommendation:</strong> Guji Highland Washed (+$0.50, 14 units at Downtown Hub)
+                                <strong>Smart Recommendation:</strong> {alt.name} (₹{alt.price.toLocaleString('en-IN')}, {alt.stock} units)
                               </div>
                               <button
-                                onClick={() => handleRescueAction(item.product_id, 'a1000000-0000-0000-0000-000000000004')}
+                                onClick={() => handleRescueAction(item.product_id, alt.id)}
                                 className="px-3 py-1.5 rounded-xl bg-[#65B99B] hover:bg-[#4E9A7F] text-white text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer self-start sm:self-auto"
                               >
                                 <Sparkles className="w-3.5 h-3.5" />
@@ -371,14 +359,79 @@ export const CustomerDashboard: React.FC = () => {
                     })}
                   </div>
 
+                  {/* Live merchant catalog — admin uploads only */}
+                  <div className="space-y-3 pt-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-[#0A2540]">
+                      Live Merchant Catalog ({catalogProducts.length})
+                    </h4>
+                    {catalogProducts.length === 0 ? (
+                      <p className="text-[11px] text-[#101413]/55">
+                        Waiting for admin Excel/CSV upload. Demo products are disabled.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        {catalogProducts.slice(0, 8).map((p) => {
+                          const stock = merchantCatalog.find((m) => m.id === p.id)?.stock ?? 0;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => {
+                                if (!basket) return;
+                                setBasketItems((prev) => {
+                                  const existing = prev.find((i) => i.product_id === p.id);
+                                  if (existing) {
+                                    return prev.map((i) =>
+                                      i.product_id === p.id
+                                        ? { ...i, quantity: i.quantity + 1 }
+                                        : i
+                                    );
+                                  }
+                                  return [
+                                    ...prev,
+                                    {
+                                      id: `local-${p.id}-${Date.now()}`,
+                                      basket_id: basket.id,
+                                      product_id: p.id,
+                                      quantity: 1,
+                                      price: p.price,
+                                      created_at: new Date().toISOString(),
+                                      product: p,
+                                    },
+                                  ];
+                                });
+                              }}
+                              className="p-3 rounded-xl bg-white border border-[#101413]/8 text-left hover:border-[#65B99B]/50 transition-all cursor-pointer"
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <img
+                                  src={p.image_url || ''}
+                                  alt={p.name}
+                                  className="w-10 h-10 rounded-lg object-cover bg-[#F8F8F3]"
+                                />
+                                <div className="min-w-0">
+                                  <p className="text-[11px] font-bold text-[#0A2540] truncate">{p.name}</p>
+                                  <p className="text-[10px] text-[#101413]/50">
+                                    ₹{p.price.toLocaleString('en-IN')} · {stock} in stock
+                                  </p>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Proceed to Checkout CTA */}
                   <div className="pt-4 flex justify-end">
                     <button
-                      onClick={() => alert('Order authorized seamlessly through Supabase PostgreSQL session!')}
-                      className="px-6 py-3 rounded-2xl bg-[#0A2540] hover:bg-[#101413] text-white text-xs font-bold tracking-wide transition-all shadow-md flex items-center gap-2 cursor-pointer"
+                      onClick={() => alert('Order authorized from merchant-uploaded catalog.')}
+                      disabled={basketItems.length === 0}
+                      className="px-6 py-3 rounded-2xl bg-[#0A2540] hover:bg-[#101413] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold tracking-wide transition-all shadow-md flex items-center gap-2 cursor-pointer"
                     >
                       <ShieldCheck className="w-4 h-4 text-[#65B99B]" />
-                      <span>Proceed with Verified Order (${(subtotal + 5.0).toFixed(2)})</span>
+                      <span>Proceed with Order (₹{(subtotal + (basketItems.length ? 99 : 0)).toLocaleString('en-IN')})</span>
                     </button>
                   </div>
                 </div>

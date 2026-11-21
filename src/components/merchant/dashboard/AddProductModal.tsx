@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   Upload,
@@ -22,7 +22,6 @@ import {
   parseExcel,
   parsePDF,
   generateSampleCSV,
-  getSampleExtractedProducts,
   ParsedProductItem,
 } from '../../../utils/fileProductParser';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -32,6 +31,7 @@ interface AddProductModalProps {
   onClose: () => void;
   onAddProduct: (product: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>) => void;
   onAddBulkProducts?: (products: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>[]) => void;
+  preferBulkMode?: boolean;
 }
 
 export const AddProductModal: React.FC<AddProductModalProps> = ({
@@ -39,9 +39,10 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   onClose,
   onAddProduct,
   onAddBulkProducts,
+  preferBulkMode = false,
 }) => {
   // Modal Mode: Single manual entry vs Bulk file import (CSV / Excel / PDF)
-  const [modalMode, setModalMode] = useState<'single' | 'bulk'>('single');
+  const [modalMode, setModalMode] = useState<'single' | 'bulk'>(preferBulkMode ? 'bulk' : 'single');
 
   // ── Single Product Form State ──
   const [name, setName] = useState('');
@@ -70,6 +71,16 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     { label: 'Gaming Laptop', url: 'https://images.unsplash.com/photo-1603302576837-37561b2e2302?auto=format&fit=crop&w=600&q=80' },
     { label: 'Smartphone Pro', url: 'https://images.unsplash.com/photo-1592750475338-74b7b21085ab?auto=format&fit=crop&w=600&q=80' },
   ];
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setModalMode(preferBulkMode ? 'bulk' : 'single');
+    setExtractedProducts([]);
+    setUploadedFile(null);
+    setBulkError(null);
+    setIsProcessingFile(false);
+    setErrorMessage(null);
+  }, [isOpen, preferBulkMode]);
 
   if (!isOpen) return null;
 
@@ -174,17 +185,6 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
-
-  // Load Immediate Demo File for quick preview & testing
-  const handleLoadDemoDataset = () => {
-    setBulkError(null);
-    const demoItems = getSampleExtractedProducts('Catalog Manifest (Demo XLSX/PDF)');
-    setExtractedProducts(demoItems);
-    setUploadedFile({
-      name: 'celerity_sample_manifest.xlsx',
-      size: 14280,
-    } as File);
   };
 
   // Remove an extracted item from the preview list
@@ -487,15 +487,6 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 >
                   <FileDown className="w-3.5 h-3.5" />
                   <span>Template (.CSV)</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleLoadDemoDataset}
-                  className="px-3 py-1.5 rounded-xl bg-[#DCEFE3] hover:bg-[#C8E8D9] text-[#064E36] text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Load Demo File</span>
                 </button>
               </div>
             </div>

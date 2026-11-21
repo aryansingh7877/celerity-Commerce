@@ -19,7 +19,7 @@ Celerity Commerce transforms the e-commerce fulfillment experience with:
 - **Styling**: Tailwind CSS + Custom Aurora & Glassmorphism Design Tokens
 - **Animations**: Framer Motion + GSAP
 - **Icons**: Lucide React
-- **Backend / Auth**: Supabase
+- **Backend / Auth**: Supabase (Postgres, Auth, RLS, Edge Functions, transactional outbox)
 
 ---
 
@@ -41,7 +41,18 @@ npm install
 npm run dev
 ```
 
-### 4. Build for Production
+### 4. Backend pipeline (Supabase)
+```bash
+cp .env.example .env
+# Apply SQL migrations in supabase/migrations/ (Dashboard SQL Editor or `npm run db:push`)
+npm run functions:serve    # Edge Functions locally
+npm run worker:outbox      # drains outbox (optional)
+npm run pipeline:smoke     # RPC smoke check
+```
+
+Details: [`supabase/README.md`](supabase/README.md)
+
+### 5. Build for Production
 ```bash
 npm run build
 ```

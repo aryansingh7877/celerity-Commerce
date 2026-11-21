@@ -1,4 +1,4 @@
-import React, {useMemo, useState, useEffect} from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   AlertCircle,
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { Product, MerchantTab } from '../../../types/product';
 import { motion } from 'framer-motion';
+import { useLiveGreeting } from '../../../lib/liveGreeting';
 
 interface StockManagementPageProps {
   products: Product[];
@@ -86,22 +87,7 @@ export const StockManagementPage: React.FC<StockManagementPageProps> = ({
     return [...outOfStockProducts, ...lowStockProducts];
   }, [alertFilter, outOfStockProducts, lowStockProducts, deadStockWatch]);
 
-  // ── Time-of-day Greeting (updates live) ──
-  const [greeting, setGreeting] = useState(() => {
-    const hr = new Date().getHours();
-    if (hr < 12) return 'Good Morning';
-    if (hr < 17) return 'Good Afternoon';
-    return 'Good Evening';
-  });
-  useEffect(() => {
-    const tick = () => {
-      const hr = new Date().getHours();
-      setGreeting(hr < 12 ? 'Good Morning' : hr < 17 ? 'Good Afternoon' : 'Good Evening');
-    };
-    tick();
-    const id = setInterval(tick, 60_000);
-    return () => clearInterval(id);
-  }, []);
+  const { greeting, clock } = useLiveGreeting();
 
   // ── Quick Insights Metrics ──
   const topProduct = useMemo(() => {
@@ -272,7 +258,7 @@ export const StockManagementPage: React.FC<StockManagementPageProps> = ({
           <div className="space-y-2.5 max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#DCEFE3] border border-[#064E36]/15 text-xs font-bold text-[#064E36]">
               <span>{greeting}</span>
-              <span aria-hidden="true">👋</span>
+              <span className="font-semibold tabular-nums text-[#5E6D64]">{clock}</span>
             </div>
 
             <h1 className="font-display font-black text-2xl sm:text-3xl text-[#202A24] tracking-tight">

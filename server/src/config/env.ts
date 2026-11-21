@@ -59,6 +59,13 @@ const envSchema = z.object({
   OLLAMA_URL: z.string().default('http://127.0.0.1:11434'),
   OLLAMA_MODEL: z.string().default('qwen2.5:7b'),
 
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().optional(),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+
   OUTBOX_POLL_MS: z.coerce.number().default(3000),
   OUTBOX_BATCH: z.coerce.number().default(20),
   DEAD_STOCK_DAYS: z.coerce.number().default(30),

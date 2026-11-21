@@ -23,6 +23,47 @@ const HUBS = ['Bengaluru', 'Mumbai', 'Delhi'] as const;
 const CART_KEY = 'celerity_customer_cart_v1';
 const CITY_KEY = 'celerity_customer_city_v1';
 
+const BRAND_IMAGES: Record<string, string> = {
+  dell: 'https://images.unsplash.com/photo-1593642632823-8f785ba67e45?auto=format&fit=crop&w=900&q=85',
+  hp: 'https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=900&q=85',
+  lenovo: 'https://images.unsplash.com/photo-1525547719571-a2d4ac882e75?auto=format&fit=crop&w=900&q=85',
+  asus: 'https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=900&q=85',
+  acer: 'https://images.unsplash.com/photo-1588872657578-7efd1f1555ed?auto=format&fit=crop&w=900&q=85',
+  apple: 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=900&q=85',
+  msi: 'https://images.unsplash.com/photo-1603302576837-37561b2e2302?auto=format&fit=crop&w=900&q=85',
+  phone: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=900&q=85',
+  headphone: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=900&q=85',
+};
+
+function enhanceImageUrl(raw: string, brand: string, name: string, category: string): string {
+  const hay = `${brand} ${name} ${category}`.toLowerCase();
+  let url = (raw || '').trim();
+  const looksGeneric =
+    !url ||
+    /photo-1603302576837-37561b2e2302/.test(url) ||
+    /photo-1593640408182-31c70c8268f5/.test(url);
+
+  if (looksGeneric) {
+    if (/headphone|earbud|audio/.test(hay)) url = BRAND_IMAGES.headphone;
+    else if (/phone|mobile|smartphone/.test(hay)) url = BRAND_IMAGES.phone;
+    else if (/dell/.test(hay)) url = BRAND_IMAGES.dell;
+    else if (/\bhp\b|hewlett/.test(hay)) url = BRAND_IMAGES.hp;
+    else if (/lenovo/.test(hay)) url = BRAND_IMAGES.lenovo;
+    else if (/asus/.test(hay)) url = BRAND_IMAGES.asus;
+    else if (/acer/.test(hay)) url = BRAND_IMAGES.acer;
+    else if (/apple|macbook/.test(hay)) url = BRAND_IMAGES.apple;
+    else if (/msi/.test(hay)) url = BRAND_IMAGES.msi;
+    else if (!url) url = BRAND_IMAGES.dell;
+  }
+
+  if (/images\.unsplash\.com/.test(url)) {
+    const base = url.split('?')[0];
+    return `${base}?auto=format&fit=crop&w=900&h=900&q=85`;
+  }
+  return url;
+}
+
+
 interface CustomerStorefrontProps {
   onOpenMerchant: () => void;
 }
@@ -42,13 +83,16 @@ function mapApiItem(item: Record<string, unknown>, city: string): StorefrontProd
   const id = String(item.productId ?? item.id);
   const price = Number(item.price ?? item.offerPrice ?? 0);
   const stock = Number(item.stock ?? 0);
+  const name = String(item.name ?? '');
+  const brand = String(item.brand ?? '');
+  const category = String(item.category ?? '');
   return {
     id,
-    name: String(item.name ?? ''),
-    brand: String(item.brand ?? ''),
-    category: String(item.category ?? ''),
+    name,
+    brand,
+    category,
     price,
-    image: String(item.imageUrl ?? item.image_url ?? ''),
+    image: enhanceImageUrl(String(item.imageUrl ?? item.image_url ?? ''), brand, name, category),
     city,
     stock,
     inStock: stock > 0,
@@ -344,66 +388,89 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6">
             {catalog.map((prod) => (
               <motion.article
                 key={prod.id}
                 layout
-                className="rounded-3xl bg-white border border-[#101413]/8 p-4 shadow-2xs flex flex-col"
+                whileHover={{ y: -6 }}
+                transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+                className="group relative flex flex-col overflow-hidden rounded-[1.35rem] bg-white border border-[#E8EBE7] shadow-[0_10px_30px_-18px_rgba(10,37,64,0.35)] hover:shadow-[0_22px_50px_-20px_rgba(6,78,54,0.35)] hover:border-[#C8E8D9] transition-shadow duration-300"
               >
-                <div className="relative aspect-square rounded-2xl overflow-hidden bg-[#EAF4EC] mb-3">
+                <div className="relative aspect-[4/3] overflow-hidden bg-[radial-gradient(ellipse_at_center,_#F4FAF6_0%,_#E3F0E8_55%,_#D5E8DC_100%)]">
+                  <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.35)_0%,transparent_35%,rgba(6,78,54,0.06)_100%)]" />
                   {prod.image ? (
-                    <img src={prod.image} alt={prod.name} className="w-full h-full object-cover" />
+                    <img
+                      src={prod.image}
+                      alt={prod.name}
+                      loading="lazy"
+                      className="relative z-[1] h-full w-full object-contain p-5 sm:p-6 transition-transform duration-500 ease-out group-hover:scale-[1.06]"
+                    />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-[#65B99B]">
-                      <Package className="w-10 h-10" />
+                    <div className="relative z-[1] flex h-full w-full items-center justify-center text-[#65B99B]">
+                      <Package className="h-12 w-12 opacity-70" />
                     </div>
                   )}
-                  <div className="absolute top-2 right-2">
+                  <div className="absolute top-3 right-3 z-[2]">
                     {prod.inStock ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[#101413]/75 text-[10px] font-bold text-[#65B99B]">
-                        <CheckCircle2 className="w-3 h-3" /> {prod.stock}
+                      <span className="inline-flex items-center gap-1 rounded-full bg-white/95 px-2.5 py-1 text-[10px] font-bold text-[#064E36] shadow-sm ring-1 ring-[#064E36]/10">
+                        <CheckCircle2 className="h-3 w-3" /> {prod.stock} in stock
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-red-950/80 text-[10px] font-bold text-red-300">
-                        <AlertCircle className="w-3 h-3" /> Rescue
+                      <span className="inline-flex items-center gap-1 rounded-full bg-[#0A2540] px-2.5 py-1 text-[10px] font-bold text-[#F4C7C3] shadow-sm">
+                        <AlertCircle className="h-3 w-3" /> Out of stock
                       </span>
                     )}
                   </div>
-                  <div className="absolute bottom-2 left-2">
-                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white/90 text-[10px] font-semibold text-[#0A2540]">
-                      <MapPin className="w-3 h-3 text-[#65B99B]" /> {prod.city}
+                  <div className="absolute bottom-3 left-3 z-[2]">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-[#0A2540]/88 px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur-sm">
+                      <MapPin className="h-3 w-3 text-[#65B99B]" /> {prod.city}
                     </span>
                   </div>
                 </div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-[#7C877F]">
-                  {prod.category}
-                </p>
-                <h3 className="font-display font-bold text-sm text-[#0A2540] leading-snug mt-0.5 line-clamp-2 min-h-[2.5rem]">
-                  {prod.name}
-                </h3>
-                <p className="text-base font-extrabold text-[#0A2540] mt-2">
-                  ₹{prod.price.toLocaleString('en-IN')}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => addToCart(prod)}
-                  className={`mt-3 w-full py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
-                    addedId === prod.id
-                      ? 'bg-[#65B99B] text-[#0A2540]'
-                      : 'bg-[#0A2540] hover:bg-[#101413] text-white'
-                  }`}
-                >
-                  {addedId === prod.id ? (
-                    <>
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Added
-                    </>
-                  ) : (
-                    <>
-                      <Plus className="w-3.5 h-3.5" /> Add to basket
-                    </>
-                  )}
-                </button>
+
+                <div className="flex flex-1 flex-col px-4 pb-4 pt-3.5">
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#7C877F]">
+                      {prod.category}
+                    </p>
+                    {prod.brand ? (
+                      <p className="truncate text-[10px] font-semibold text-[#65B99B]">{prod.brand}</p>
+                    ) : null}
+                  </div>
+                  <h3 className="font-display text-[15px] font-extrabold leading-snug tracking-tight text-[#0A2540] line-clamp-2 min-h-[2.6rem]">
+                    {prod.name}
+                  </h3>
+                  <div className="mt-3 flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-[#7C877F]">
+                        From
+                      </p>
+                      <p className="font-display text-xl font-black tracking-tight text-[#064E36]">
+                        ₹{prod.price.toLocaleString('en-IN')}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => addToCart(prod)}
+                      className={`inline-flex items-center justify-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold cursor-pointer transition-all duration-200 ${
+                        addedId === prod.id
+                          ? 'bg-[#65B99B] text-[#0A2540] shadow-sm'
+                          : 'bg-[#0A2540] text-white shadow-md shadow-[#0A2540]/20 hover:bg-[#064E36] hover:shadow-lg hover:shadow-[#064E36]/25'
+                      }`}
+                    >
+                      {addedId === prod.id ? (
+                        <>
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Added
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-3.5 w-3.5" /> Add
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
               </motion.article>
             ))}
           </div>

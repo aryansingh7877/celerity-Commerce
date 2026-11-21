@@ -197,7 +197,17 @@ def main() -> None:
         "Retail_Price_INR",
         "Warranty",
         "Image_File",
+        "Region",
+        "Supplier_Name",
+        "Supplier_Phone",
     ]
+
+    REGIONS = ["Bangalore", "Mumbai", "Delhi"]
+    SUPPLIERS = {
+        "Bangalore": ("Silicon Hub Distributors", "+919845512345"),
+        "Mumbai": ("Gateway Tech Supplies", "+919820045678"),
+        "Delhi": ("Capital Circuit Traders", "+919811178901"),
+    }
     ws.append(columns)
     style_header(ws)
     ws.row_dimensions[1].height = 28
@@ -219,6 +229,9 @@ def main() -> None:
         "N": 16,
         "O": 22,
         "P": 16,
+        "Q": 12,
+        "R": 26,
+        "S": 16,
     }
     for col, width in widths.items():
         ws.column_dimensions[col].width = width
@@ -239,6 +252,9 @@ def main() -> None:
         if not img_path:
             missing.append(sku)
 
+        region = row.get("Region") or REGIONS[(idx - 2) % 3]
+        supplier_name = row.get("Supplier_Name") or SUPPLIERS[region][0]
+        supplier_phone = row.get("Supplier_Phone") or SUPPLIERS[region][1]
         values = [
             "",
             row["SKU_ID"],
@@ -256,6 +272,9 @@ def main() -> None:
             int(row["Retail_Price_INR"]),
             row["Warranty"],
             img_path.name if img_path else "",
+            region,
+            supplier_name,
+            supplier_phone,
         ]
         ws.append(values)
         ws.row_dimensions[idx].height = 125

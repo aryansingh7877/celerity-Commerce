@@ -4,6 +4,7 @@ import { AuthPage } from './components/auth/AuthPage';
 import { MerchantDashboard } from './components/merchant/MerchantDashboard';
 import { CustomerStorefront } from './components/storefront/CustomerStorefront';
 import { BrandLogo } from './components/common/BrandLogo';
+import { MfaChallenge } from './components/auth/MfaChallenge';
 import { Loader2 } from 'lucide-react';
 
 const LoadingScreen: React.FC = () => (
@@ -19,7 +20,7 @@ const LoadingScreen: React.FC = () => (
 );
 
 const AppContent: React.FC = () => {
-  const { user, session, profile, isLoading, signOut } = useAuth();
+  const { user, session, profile, isLoading, signOut, mfaPending, completeMfa } = useAuth();
   // Dual-mode: any signed-in user can open Admin or Customer view
   const [viewMode, setViewMode] = useState<'merchant' | 'storefront'>('merchant');
 
@@ -30,6 +31,19 @@ const AppContent: React.FC = () => {
   // Require a real Supabase JWT — API calls need Bearer token
   if (!session?.access_token || !user) {
     return <AuthPage />;
+  }
+
+  if (mfaPending) {
+    return (
+      <MfaChallenge
+        onVerified={async () => {
+          await completeMfa();
+        }}
+        onCancel={async () => {
+          await signOut();
+        }}
+      />
+    );
   }
 
   if (viewMode === 'merchant') {

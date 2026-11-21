@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Product } from '../../../types/product';
 import { BrandLogo } from '../../common/BrandLogo';
+import { FirewallTwoStep } from '../security/FirewallTwoStep';
 
 interface SettingsPageProps {
   merchantName?: string;
@@ -694,25 +695,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   Security &amp; Access Control
                 </h2>
                 <p className="text-xs text-[#7C877F] mt-0.5">
-                  Manage authentication protection and merchant admin session access.
+                  Firewall two-step verification and merchant session protection.
                 </p>
               </div>
 
-              <div className="p-4 rounded-2xl bg-[#FAF9F5] border border-[#E8EBE7] flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs font-bold text-[#202A24]">Two-Factor Authentication (2FA)</p>
-                  <p className="text-[11px] text-[#7C877F] mt-0.5">
-                    Require verification before bulk inventory updates or hub configuration edits.
-                  </p>
-                </div>
-                <ToggleSwitch
-                  checked={settings.twoFactorEnabled}
-                  onChange={() =>
-                    handleToggle('twoFactorEnabled', 'Two-Factor Authentication')
-                  }
-                  label="Two-Factor Authentication"
-                />
-              </div>
+              <FirewallTwoStep />
 
               <div className="p-4 rounded-2xl bg-[#EAF4EC]/60 border border-[#C8E8D9] flex items-center justify-between gap-4 text-xs">
                 <div>
@@ -722,7 +709,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   </p>
                 </div>
                 <span className="px-3 py-1 rounded-full bg-white border border-[#C8E8D9] text-[11px] font-bold text-[#064E36]">
-                  Verified Admin
+                  Signed in
                 </span>
               </div>
             </div>

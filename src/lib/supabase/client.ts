@@ -29,6 +29,7 @@ export interface DatabaseProfile {
   email: string | null;
   role?: 'customer' | 'admin';
   preferred_city?: string | null;
+  email_2fa_enabled?: boolean;
   created_at: string;
   updated_at: string;
 }

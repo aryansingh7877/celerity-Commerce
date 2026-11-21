@@ -8,6 +8,12 @@ import {
   sendPasswordReset,
   getProfile,
 } from '../lib/supabase/auth';
+import {
+  clearTwoStepPass,
+  needsTwoStepChallenge,
+  markTwoStepPassed,
+  isEmailAuthCallbackUrl,
+} from '../lib/supabase/mfa';
 import { api } from '../lib/api';
 
 const FALLBACK_KEY = 'celerity_fallback_user';
@@ -28,11 +34,13 @@ interface AuthContextType {
   closeAuthModal: () => void;
   openDashboard: () => void;
   closeDashboard: () => void;
-  signIn: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
+  signIn: (email: string, pass: string) => Promise<{ success: boolean; error?: string; needsMfa?: boolean }>;
   signUp: (email: string, pass: string, name: string) => Promise<{ success: boolean; error?: string }>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   refreshProfile: () => Promise<void>;
+  mfaPending: boolean;
+  completeMfa: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -55,6 +63,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isOpen: false,
     view: 'login',
   });
+  const [mfaPending, setMfaPending] = useState(false);
 
   const loadProfile = async (currentUser: User) => {
     const prof = await getProfile(currentUser.id);
@@ -94,11 +103,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(null);
       setUser(null);
       setProfile(null);
+      setMfaPending(false);
       return;
+    }
+    // Magic-link / email callback: treat as second factor already satisfied
+    if (isEmailAuthCallbackUrl()) {
+      markTwoStepPassed(currentSession.user.id);
+      try {
+        window.history.replaceState({}, '', window.location.pathname + window.location.search);
+      } catch {
+        /* ignore */
+      }
     }
     // Set auth state immediately so the UI can leave the login screen
     setSession(currentSession);
     setUser(currentSession.user);
+    try {
+      const status = await needsTwoStepChallenge(currentSession.user.id);
+      setMfaPending(status.needs);
+    } catch {
+      setMfaPending(false);
+    }
     // Profile fetch is best-effort (must not block / deadlock auth lock)
     try {
       await loadProfile(currentSession.user);
@@ -109,16 +134,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     clearLegacyFallback();
+    // Capture before supabase clears the hash from a magic-link / email callback
+    const emailLinkAtBoot = isEmailAuthCallbackUrl();
 
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
+      if (emailLinkAtBoot && currentSession?.user?.id) {
+        markTwoStepPassed(currentSession.user.id);
+      }
       void applySession(currentSession).finally(() => setIsLoading(false));
     });
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+    } = supabase.auth.onAuthStateChange((event, currentSession) => {
       // Defer: awaiting getSession/API inside this callback deadlocks supabase-js
       setTimeout(() => {
+        if (
+          emailLinkAtBoot &&
+          (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') &&
+          currentSession?.user?.id
+        ) {
+          markTwoStepPassed(currentSession.user.id);
+        }
         void applySession(currentSession).finally(() => setIsLoading(false));
       }, 0);
     });
@@ -149,7 +186,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signIn = async (email: string, pass: string) => {
-    const res = await signInUser(email.trim().toLowerCase(), pass);
+    const normalized = email.trim().toLowerCase();
+    const res = await signInUser(normalized, pass);
     if (res.error || !res.session?.access_token || !res.user) {
       return {
         success: false,
@@ -158,8 +196,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     setIsLoading(false);
     await applySession(res.session);
+    const status = await needsTwoStepChallenge(res.user.id);
+    if (status.needs) {
+      setMfaPending(true);
+      // Email code is sent only when the user chooses Email on the challenge screen
+      closeAuthModal();
+      return { success: true, needsMfa: true };
+    }
+    setMfaPending(false);
     closeAuthModal();
     return { success: true };
+  };
+
+  const completeMfa = async () => {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.user?.id) {
+      markTwoStepPassed(data.session.user.id);
+    }
+    await applySession(data.session);
+    setMfaPending(false);
   };
 
   const signUp = async (email: string, pass: string, name: string) => {
@@ -195,10 +250,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     clearLegacyFallback();
+    clearTwoStepPass();
     await signOutUser();
     setUser(null);
     setSession(null);
     setProfile(null);
+    setMfaPending(false);
     setIsDashboardOpen(false);
   };
 
@@ -234,6 +291,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signOut,
         resetPassword,
         refreshProfile,
+        mfaPending,
+        completeMfa,
       }}
     >
       {children}

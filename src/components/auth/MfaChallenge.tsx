@@ -70,7 +70,7 @@ export const MfaChallenge: React.FC<MfaChallengeProps> = ({ onVerified, onCancel
     (async () => {
       if (loading || !user?.id) return;
       if (method === 'email' && canEmail) {
-        setInfo('Enter your email address, then tap Send code.');
+        setInfo('Enter any email address to receive a 6-digit code, then tap Send code.');
         return;
       }
       if (method === 'totp' && canTotp) {

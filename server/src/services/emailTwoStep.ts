@@ -171,8 +171,8 @@ async function verifyLocalCode(userId: string, code: string) {
 }
 
 /**
- * Send a 6-digit code to the email the retailer entered.
- * Server may use Resend/SMTP if configured; otherwise Supabase Auth mail (no retailer API keys).
+ * Send a 6-digit code to whatever email the user entered.
+ * Prefer Resend/SMTP (works for any inbox). Fall back to Supabase Auth mailer.
  */
 export async function issueEmailTwoStepCode(userId: string, email: string) {
   const normalized = email.trim().toLowerCase();
@@ -183,21 +183,32 @@ export async function issueEmailTwoStepCode(userId: string, email: string) {
   const hasCustomMail =
     Boolean(env.RESEND_API_KEY) || Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
 
+  // Always mint our own 6-digit code when custom mail is available so any inbox works.
   if (hasCustomMail) {
     const code = String(randomInt(100000, 999999));
     await storeLocalCode(userId, code, 'local');
+    const errors: string[] = [];
     try {
       if (await sendViaResend(normalized, code)) {
         return { delivery: 'email' as const, channel: 'resend' as const };
       }
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : 'Resend failed');
+    }
+    try {
       if (await sendViaSmtp(normalized, code)) {
         return { delivery: 'email' as const, channel: 'smtp' as const };
       }
     } catch (err) {
-      await getPool().query(`DELETE FROM email_2fa_codes WHERE user_id = $1`, [userId]);
-      throw err;
+      errors.push(err instanceof Error ? err.message : 'SMTP failed');
     }
+    // Custom mail configured but delivery failed — do not silently switch channels
+    // (would invalidate the stored local code). Surface the error.
     await getPool().query(`DELETE FROM email_2fa_codes WHERE user_id = $1`, [userId]);
+    throw new Error(
+      errors[0] ||
+        'Could not deliver the code to that email. Check mail settings and try again.'
+    );
   }
 
   await sendViaSupabaseAuth(normalized);

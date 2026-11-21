@@ -28,11 +28,7 @@ authRouter.post(
       })
       .parse(req.body);
     const entered = body.email.trim().toLowerCase();
-    const account = (req.user!.email || '').trim().toLowerCase();
-    if (!account) throw new HttpError(400, 'Account has no email on file');
-    if (entered !== account) {
-      throw new HttpError(400, 'Enter the email registered on this account.');
-    }
+    // Send the 6-digit code to whatever address the user enters (not limited to account email).
     const result = await issueEmailTwoStepCode(req.user!.id, entered);
     res.json({ ok: true, delivery: result.delivery, channel: result.channel });
   })

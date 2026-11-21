@@ -32,6 +32,7 @@ interface AddProductModalProps {
   onAddProduct: (product: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>) => void;
   onAddBulkProducts?: (products: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>[], replaceExisting?: boolean) => void;
   preferBulkMode?: boolean;
+  targetLocation?: string;
 }
 
 export const AddProductModal: React.FC<AddProductModalProps> = ({
@@ -40,9 +41,16 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   onAddProduct,
   onAddBulkProducts,
   preferBulkMode = false,
+  targetLocation,
 }) => {
   // Modal Mode: Single manual entry vs Bulk file import (CSV / Excel / PDF)
   const [modalMode, setModalMode] = useState<'single' | 'bulk'>(preferBulkMode ? 'bulk' : 'single');
+
+  const getInitialLocation = (): 'Bangalore' | 'Mumbai' | 'Delhi' => {
+    if (targetLocation === 'Mumbai') return 'Mumbai';
+    if (targetLocation === 'Delhi') return 'Delhi';
+    return 'Bangalore';
+  };
 
   // ── Single Product Form State ──
   const [name, setName] = useState('');
@@ -50,7 +58,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [sku, setSku] = useState('');
   const [price, setPrice] = useState<number | ''>(2499);
   const [stock, setStock] = useState<number | ''>(20);
-  const [location, setLocation] = useState<'Bangalore' | 'Mumbai' | 'Delhi'>('Bangalore');
+  const [location, setLocation] = useState<'Bangalore' | 'Mumbai' | 'Delhi' | 'Bengaluru'>(getInitialLocation);
   const [supplierName, setSupplierName] = useState('');
   const [supplierPhone, setSupplierPhone] = useState('');
   const [image, setImage] = useState(
@@ -64,7 +72,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [extractedProducts, setExtractedProducts] = useState<ParsedProductItem[]>([]);
-  const [replaceExistingOnBulk, setReplaceExistingOnBulk] = useState(true);
+  const [replaceExistingOnBulk, setReplaceExistingOnBulk] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -77,13 +85,15 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
+    const initialSingle = getInitialLocation();
+    setLocation(initialSingle);
     setModalMode(preferBulkMode ? 'bulk' : 'single');
     setExtractedProducts([]);
     setUploadedFile(null);
     setBulkError(null);
     setIsProcessingFile(false);
     setErrorMessage(null);
-  }, [isOpen, preferBulkMode]);
+  }, [isOpen, preferBulkMode, targetLocation]);
 
   if (!isOpen) return null;
 
@@ -125,7 +135,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     onClose();
   };
 
-  // Process File Upload (CSV, Excel XLSX/XLS, or PDF)
+  // Process File Upload (CSV, Excel XLSX/XLS, or PDF) — Automatically detects and routes regional hubs
   const processUploadedFile = async (file: File) => {
     setBulkError(null);
     setIsProcessingFile(true);
@@ -163,6 +173,12 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     } finally {
       setIsProcessingFile(false);
     }
+  };
+
+  const handleUpdateItemLocation = (index: number, newLoc: 'Bangalore' | 'Mumbai' | 'Delhi') => {
+    setExtractedProducts((prev) =>
+      prev.map((item, idx) => (idx === index ? { ...item, location: newLoc } : item))
+    );
   };
 
   const handleFileDrop = (e: React.DragEvent) => {
@@ -530,6 +546,24 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               </div>
             )}
 
+            {/* Automatic Regional Hub Detection Banner */}
+            <div className="p-3.5 rounded-2xl bg-[#EAF4EC]/80 border border-[#064E36]/20 flex items-center justify-between gap-3 shadow-2xs">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-xl bg-[#064E36] text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <MapPin className="w-4 h-4 text-[#DCEFE3]" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-[#064E36]">⚡ Regional Auto-Detection Active</span>
+                    <span className="px-2 py-0.5 rounded-full bg-[#064E36]/10 text-[#064E36] font-mono text-[10px] font-bold">Auto-Split</span>
+                  </div>
+                  <p className="text-[11px] text-[#202A24]/85 mt-0.5">
+                    Reads the <strong>Region / Location / City</strong> column in your file and automatically splits catalog items across <strong>Delhi, Mumbai & Bangalore</strong> hubs.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             {/* Drag & Drop Zone */}
             <div
               onDragOver={(e) => {
@@ -574,7 +608,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
             {/* Extracted Products Preview Table */}
             {extractedProducts.length > 0 && (
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-[#064E36]" />
                     <h3 className="font-display font-bold text-sm text-[#202A24]">
@@ -582,11 +616,22 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                     </h3>
                   </div>
 
-                  {uploadedFile && (
-                    <span className="text-[11px] font-mono text-[#7C877F]">
-                      Source: {uploadedFile.name}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="px-2 py-0.5 rounded-md bg-[#EAF4EC] text-[#064E36] font-mono text-[10px] font-bold">
+                      Bangalore: {extractedProducts.filter((p) => p.location === 'Bangalore').length}
                     </span>
-                  )}
+                    <span className="px-2 py-0.5 rounded-md bg-[#FAF9F5] border border-[#E8EBE7] text-[#0A2540] font-mono text-[10px] font-bold">
+                      Mumbai: {extractedProducts.filter((p) => p.location === 'Mumbai').length}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md bg-[#F5EBCB] text-[#7A5800] font-mono text-[10px] font-bold">
+                      Delhi: {extractedProducts.filter((p) => p.location === 'Delhi').length}
+                    </span>
+                    {uploadedFile && (
+                      <span className="text-[10px] font-mono text-[#7C877F] ml-1">
+                        ({uploadedFile.name})
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="rounded-2xl border border-[#E8EBE7] overflow-hidden max-h-60 overflow-y-auto">
@@ -627,7 +672,17 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                             ₹{item.price.toLocaleString()}
                           </td>
                           <td className="py-2 px-2 font-mono font-bold">{item.stock}</td>
-                          <td className="py-2 px-2 text-[#7C877F]">{item.location}</td>
+                          <td className="py-2 px-2">
+                            <select
+                              value={item.location}
+                              onChange={(e) => handleUpdateItemLocation(idx, e.target.value as any)}
+                              className="px-2 py-0.5 rounded-md bg-[#FAF9F5] border border-[#E8EBE7] text-[11px] font-semibold text-[#064E36] focus:border-[#064E36] outline-none cursor-pointer"
+                            >
+                              <option value="Bangalore">Bangalore</option>
+                              <option value="Mumbai">Mumbai</option>
+                              <option value="Delhi">Delhi</option>
+                            </select>
+                          </td>
                           <td className="py-2 px-2 text-right">
                             <button
                               type="button"

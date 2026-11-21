@@ -4,14 +4,12 @@ import {
   Trash2,
   Plus,
   Minus,
-  AlertCircle,
   CheckCircle2,
-  AlertTriangle,
-  ArrowUpDown,
   Search,
-  Filter,
   MapPin,
-  ExternalLink,
+  MessageSquare,
+  Lightbulb,
+  CreditCard,
 } from 'lucide-react';
 import { Product, StockStatus } from '../../../types/product';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -21,18 +19,39 @@ interface InventoryTableProps {
   onEditProduct: (product: Product) => void;
   onDeleteProduct: (product: Product) => void;
   onAdjustStock: (productId: string, delta: number) => void;
+  onInformSupplier?: (product: Product) => void;
+  onSuggestDeadStockSolutions?: (product: Product) => void;
+  onOpenPaymentDiscounts?: (product: Product) => void;
   onSelectProductDetails?: (product: Product) => void;
 }
+
+export const DEAD_STOCK_THRESHOLD = 100;
 
 export const InventoryTable: React.FC<InventoryTableProps> = ({
   products,
   onEditProduct,
   onDeleteProduct,
   onAdjustStock,
-  onSelectProductDetails,
+  onInformSupplier,
+  onSuggestDeadStockSolutions,
+  onOpenPaymentDiscounts,
 }) => {
-  // Helper to calculate status
-  const getStockStatus = (stock: number): { label: string; status: StockStatus; badgeClass: string; dotClass: string } => {
+  const getStockStatus = (
+    stock: number
+  ): {
+    label: string;
+    status: StockStatus | 'dead_stock';
+    badgeClass: string;
+    dotClass: string;
+  } => {
+    if (stock >= DEAD_STOCK_THRESHOLD) {
+      return {
+        label: 'Dead Stock',
+        status: 'dead_stock',
+        badgeClass: 'bg-[#F5EBCB] text-[#7A5800] border-[#E8D58A]',
+        dotClass: 'bg-[#D97706]',
+      };
+    }
     if (stock > 10) {
       return {
         label: 'In Stock',
@@ -63,7 +82,9 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
         <div className="w-12 h-12 rounded-2xl bg-[#FAF9F5] border border-[#E8EBE7] flex items-center justify-center mx-auto mb-3 text-[#7C877F]">
           <Search className="w-6 h-6" />
         </div>
-        <h3 className="font-display font-bold text-base text-[#202A24]">No products found</h3>
+        <h3 className="font-display font-bold text-base text-[#202A24]">
+          No products found
+        </h3>
         <p className="text-xs text-[#7C877F] mt-1 max-w-sm mx-auto">
           No inventory items match your current filter or search criteria. Try modifying your search or reset the filters.
         </p>
@@ -78,19 +99,23 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
           <thead>
             <tr className="border-b border-[#E8EBE7] bg-[#FAF9F5]/70 text-[11px] font-extrabold uppercase tracking-wider text-[#7C877F]">
               <th className="py-4 px-4 sm:px-6">Product</th>
-              <th className="py-4 px-4">SKU</th>
-              <th className="py-4 px-4">Category</th>
-              <th className="py-4 px-4">Price</th>
-              <th className="py-4 px-4">Available Stock</th>
-              <th className="py-4 px-4">Store Location</th>
-              <th className="py-4 px-4">Stock Status</th>
-              <th className="py-4 px-4 sm:px-6 text-right">Actions</th>
+              <th className="py-4 px-3">SKU</th>
+              <th className="py-4 px-3">Category</th>
+              <th className="py-4 px-3">Price &amp; Offers</th>
+              <th className="py-4 px-3">Available Stock</th>
+              <th className="py-4 px-3">Store Location</th>
+              <th className="py-4 px-3">Stock Status</th>
+              <th className="py-4 px-4">Recommended Action</th>
+              <th className="py-4 px-4 sm:px-6 text-right">Manage</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#E8EBE7] text-sm">
             <AnimatePresence>
               {products.map((product) => {
                 const statusInfo = getStockStatus(product.stock);
+                const isLowOrOut = product.stock <= 10;
+                const isDeadStock = product.stock >= DEAD_STOCK_THRESHOLD;
+                const offers = product.paymentOffers || [];
 
                 return (
                   <motion.tr
@@ -114,10 +139,10 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                           />
                         </div>
                         <div className="min-w-0">
-                          <p className="font-display font-bold text-sm text-[#202A24] truncate">
+                          <p className="font-display font-bold text-sm text-[#202A24] truncate max-w-[210px]">
                             {product.name}
                           </p>
-                          <p className="text-xs text-[#7C877F] line-clamp-1 max-w-[220px]">
+                          <p className="text-xs text-[#7C877F] line-clamp-1 max-w-[210px]">
                             {product.description}
                           </p>
                         </div>
@@ -125,34 +150,48 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                     </td>
 
                     {/* SKU */}
-                    <td className="py-4 px-4 whitespace-nowrap">
+                    <td className="py-4 px-3 whitespace-nowrap">
                       <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-[#FAF9F5] border border-[#E8EBE7] text-[#202A24]">
                         {product.sku}
                       </span>
                     </td>
 
                     {/* Category */}
-                    <td className="py-4 px-4 whitespace-nowrap">
+                    <td className="py-4 px-3 whitespace-nowrap">
                       <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-[#EAF4EC] text-[#064E36] border border-[#C8E8D9]">
                         {product.category}
                       </span>
                     </td>
 
-                    {/* Price */}
-                    <td className="py-4 px-4">
-                      <span className="font-display font-extrabold text-[#064E36] text-sm">
-                        ₹{product.price.toLocaleString()}
-                      </span>
+                    {/* Price & Active Payment Method Discounts */}
+                    <td className="py-4 px-3 whitespace-nowrap">
+                      <div>
+                        <span className="font-display font-extrabold text-[#064E36] text-sm">
+                          ₹{product.price.toLocaleString('en-IN')}
+                        </span>
+                        {offers.length > 0 && (
+                          <div className="flex flex-col gap-1 mt-1">
+                            {offers.slice(0, 2).map((o) => (
+                              <span
+                                key={o.id}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#DCEFE3] text-[#064E36] text-[10px] font-extrabold w-fit"
+                              >
+                                <CreditCard className="w-2.5 h-2.5" />
+                                {o.discountPct}% · {o.bankName} ({o.method})
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </td>
 
                     {/* Stock with inline quick + / - adjustment */}
-                    <td className="py-4 px-4">
+                    <td className="py-4 px-3 whitespace-nowrap">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-xs w-8 text-[#202A24]">
+                        <span className="font-mono font-bold text-xs min-w-[2.25rem] text-[#202A24]">
                           {product.stock}
                         </span>
 
-                        {/* Inline Stock Adjustment Controls */}
                         <div className="flex items-center gap-1 opacity-90 group-hover:opacity-100 transition-opacity">
                           <button
                             type="button"
@@ -178,7 +217,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                     </td>
 
                     {/* Store Location */}
-                    <td className="py-4 px-4">
+                    <td className="py-4 px-3 whitespace-nowrap">
                       <div className="flex items-center gap-1.5 text-xs text-[#202A24] font-medium">
                         <MapPin className="w-3.5 h-3.5 text-[#064E36]" />
                         <span>{product.location} Hub</span>
@@ -186,7 +225,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                     </td>
 
                     {/* Stock Status Badge */}
-                    <td className="py-4 px-4">
+                    <td className="py-4 px-3 whitespace-nowrap">
                       <span
                         className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${statusInfo.badgeClass}`}
                       >
@@ -197,8 +236,58 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                       </span>
                     </td>
 
-                    {/* Actions: Edit & Delete */}
-                    <td className="py-4 px-4 sm:px-6 text-right">
+                    {/* Dynamic Recommended Action Column */}
+                    <td className="py-4 px-4 whitespace-nowrap">
+                      {isLowOrOut ? (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => onInformSupplier?.(product)}
+                            className="px-3 py-1.5 rounded-xl bg-[#064E36] hover:bg-[#103C2D] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs transition-all"
+                          >
+                            <MessageSquare className="w-3.5 h-3.5 text-[#C8E8D9]" />
+                            <span>Inform Supplier</span>
+                          </button>
+                        </div>
+                      ) : isDeadStock ? (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => onSuggestDeadStockSolutions?.(product)}
+                            className="px-2.5 py-1.5 rounded-xl bg-[#FFFBEB] hover:bg-[#F5EBCB] border border-[#E8D58A] text-[#7A5800] text-xs font-extrabold flex items-center gap-1 cursor-pointer transition-all"
+                          >
+                            <Lightbulb className="w-3.5 h-3.5" />
+                            <span>Suggest Solutions</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onOpenPaymentDiscounts?.(product)}
+                            className="px-2.5 py-1.5 rounded-xl bg-[#EAF4EC] hover:bg-[#DCEFE3] border border-[#C8E8D9] text-[#064E36] text-xs font-extrabold flex items-center gap-1 cursor-pointer transition-all"
+                          >
+                            <CreditCard className="w-3.5 h-3.5" />
+                            <span>Payment Discount</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#7C877F]">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-[#064E36]" />
+                            No action required
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => onOpenPaymentDiscounts?.(product)}
+                            title="Add bank or payment method discount"
+                            className="px-2 py-1 rounded-lg bg-[#FAF9F5] hover:bg-[#EAF4EC] border border-[#E8EBE7] text-[10px] font-bold text-[#064E36] cursor-pointer transition-colors"
+                          >
+                            + Bank Offer
+                          </button>
+                        </div>
+                      )}
+                    </td>
+
+                    {/* Manage: Edit & Delete */}
+                    <td className="py-4 px-4 sm:px-6 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-1.5">
                         <button
                           type="button"
@@ -233,12 +322,22 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
         <p>
           Showing <span className="font-bold text-[#202A24]">{products.length}</span> inventory items
         </p>
-        <p className="flex items-center gap-2">
-          <span>Rule: <strong>In Stock</strong> (&gt;10)</span>
+        <p className="flex flex-wrap items-center gap-2">
+          <span>
+            Rule: <strong>Out of Stock</strong> (0)
+          </span>
           <span>•</span>
-          <span><strong>Low Stock</strong> (1-10)</span>
+          <span>
+            <strong>Low Stock</strong> (1–10 → Inform Supplier)
+          </span>
           <span>•</span>
-          <span><strong>Out of Stock</strong> (0)</span>
+          <span>
+            <strong>In Stock</strong> (11–99 → No Action Required)
+          </span>
+          <span>•</span>
+          <span>
+            <strong>Dead Stock</strong> (&ge;100 → Solutions &amp; Bank Offers)
+          </span>
         </p>
       </div>
     </div>

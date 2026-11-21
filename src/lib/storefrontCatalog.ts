@@ -18,6 +18,7 @@ export interface MultiCityProduct {
   price: number;
   mrp: number;
   image: string;
+  images?: string[];
   description: string;
   specs: Record<string, string>;
   rating: number;
@@ -498,6 +499,7 @@ function mapMerchantToMultiCity(p: MerchantProduct, idx: number): MultiCityProdu
     price: p.price,
     mrp: Math.round((p.price * 1.24) / 10) * 10,
     image: p.image,
+    images: p.images && p.images.length > 0 ? p.images : [p.image],
     description: p.description,
     specs: parseSpecsFromDescription(p.description, p.category, p.sku),
     rating: Number((4.7 + (idx % 3) * 0.1).toFixed(1)),

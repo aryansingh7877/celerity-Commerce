@@ -24,7 +24,9 @@ import { motion } from 'framer-motion';
 interface StockManagementPageProps {
   products: Product[];
   onAdjustStock: (productId: string, delta: number) => void;
-  onEditProduct: (product: Product) => void;
+  onEditProduct?: (product: Product) => void;
+  onInformSupplier?: (product: Product) => void;
+  onSuggestDeadStockSolutions?: (product: Product) => void;
   onNavigateTab?: (tab: MerchantTab) => void;
   merchantName?: string;
 }
@@ -35,7 +37,8 @@ type TrendRange = '7d' | '30d' | '90d';
 export const StockManagementPage: React.FC<StockManagementPageProps> = ({
   products,
   onAdjustStock,
-  onEditProduct,
+  onInformSupplier,
+  onSuggestDeadStockSolutions,
   onNavigateTab,
 }) => {
   const [lowThreshold, setLowThreshold] = useState<number>(10);
@@ -620,7 +623,16 @@ export const StockManagementPage: React.FC<StockManagementPageProps> = ({
                           </span>
                         )}
 
-                        {!isDeadStockView && (
+                        {isDeadStockView ? (
+                          <button
+                            type="button"
+                            onClick={() => onSuggestDeadStockSolutions?.(p)}
+                            className="px-3 py-1.5 rounded-xl bg-[#064E36] hover:bg-[#103C2D] text-white text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                          >
+                            <Lightbulb className="w-3 h-3 text-[#C8E8D9]" />
+                            <span>Suggest Solutions</span>
+                          </button>
+                        ) : (
                           <>
                             <button
                               type="button"
@@ -631,25 +643,17 @@ export const StockManagementPage: React.FC<StockManagementPageProps> = ({
                               <span>{isZero ? 'Restock +20' : '+10'}</span>
                             </button>
 
-                            <a
-                              href={buildMailtoHref(p)}
-                              title="Pre-draft supplier restock email"
-                              className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-[#EAF4EC] border border-[#E8EBE7] text-[11px] font-bold text-[#064E36] flex items-center gap-1 transition-colors"
+                            <button
+                              type="button"
+                              onClick={() => onInformSupplier?.(p)}
+                              title="Inform supplier via WhatsApp or Call"
+                              className="px-3 py-1.5 rounded-xl bg-white hover:bg-[#EAF4EC] border border-[#E8EBE7] text-[11px] font-bold text-[#064E36] flex items-center gap-1 transition-colors cursor-pointer"
                             >
                               <Mail className="w-3 h-3" />
-                              <span>Supplier</span>
-                            </a>
+                              <span>Inform Supplier</span>
+                            </button>
                           </>
                         )}
-
-                        <button
-                          type="button"
-                          onClick={() => onEditProduct(p)}
-                          title="Edit SKU"
-                          className="p-1.5 rounded-xl bg-white hover:bg-[#FAF9F5] border border-[#E8EBE7] text-[#7C877F] hover:text-[#202A24] cursor-pointer"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
                       </div>
                     </div>
                   );

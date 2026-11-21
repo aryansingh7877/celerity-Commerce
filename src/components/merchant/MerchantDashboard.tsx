@@ -13,8 +13,14 @@ import { SettingsPage } from './pages/Settings';
 import { AddProductModal } from './dashboard/AddProductModal';
 import { EditProductModal } from './dashboard/EditProductModal';
 import { DeleteConfirmation } from './dashboard/DeleteConfirmation';
+import { SupplierContactModal } from './dashboard/SupplierContactModal';
+import {
+  DeadStockSolutionsModal,
+  PaymentDiscountModal,
+} from './dashboard/InventoryActionModals';
 import { CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { PaymentDiscountOffer } from '../../types/product';
 
 interface MerchantDashboardProps {
   onExitToStorefront: () => void;
@@ -44,6 +50,11 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
   const [productToEdit, setProductToEdit] = useState<Product | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+
+  // Supplier Outreach, Dead Stock Solutions & Payment Discount Modals
+  const [supplierModalProduct, setSupplierModalProduct] = useState<Product | null>(null);
+  const [deadStockModalProduct, setDeadStockModalProduct] = useState<Product | null>(null);
+  const [paymentModalProduct, setPaymentModalProduct] = useState<Product | null>(null);
 
   // ── 3. Notification Toast ──
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -154,9 +165,64 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     }
   };
 
-  // Dynamic alert counts
+  // Dynamic alert counts & low/zero stock product list for Topbar notifications
   const lowStockCount = products.filter((p) => p.stock >= 1 && p.stock <= 10).length;
   const outOfStockCount = products.filter((p) => p.stock === 0).length;
+  const alertProducts = products.filter((p) => p.stock <= 10);
+
+  const handleSaveSupplierInfo = (
+    productId: string,
+    supplierName: string,
+    supplierPhone: string
+  ) => {
+    setProducts((prev) =>
+      prev.map((p) =>
+        p.id === productId
+          ? { ...p, supplierName, supplierPhone, lastUpdated: new Date().toISOString() }
+          : p
+      )
+    );
+  };
+
+  const handleSavePaymentOffers = (
+    productId: string,
+    offers: PaymentDiscountOffer[]
+  ) => {
+    setProducts((prev) =>
+      prev.map((p) =>
+        p.id === productId
+          ? { ...p, paymentOffers: offers, lastUpdated: new Date().toISOString() }
+          : p
+      )
+    );
+    setPaymentModalProduct((prev) =>
+      prev && prev.id === productId ? { ...prev, paymentOffers: offers } : prev
+    );
+    showToast('Updated payment method discounts for SKU.');
+  };
+
+  const handleApplyDeadStockMarkdown = (product: Product, discountPct: number) => {
+    const newPrice = Math.max(100, Math.round((product.price * (100 - discountPct)) / 100));
+    setProducts((prev) =>
+      prev.map((p) =>
+        p.id === product.id
+          ? { ...p, price: newPrice, lastUpdated: new Date().toISOString() }
+          : p
+      )
+    );
+    showToast(`Applied ${discountPct}% clearance markdown on "${product.name}".`);
+  };
+
+  const handleRebalanceDeadStock = (product: Product, targetStock: number) => {
+    setProducts((prev) =>
+      prev.map((p) =>
+        p.id === product.id
+          ? { ...p, stock: targetStock, lastUpdated: new Date().toISOString() }
+          : p
+      )
+    );
+    showToast(`Transferred excess units of "${product.name}" to partner city hubs.`);
+  };
 
   return (
     <div className="min-h-screen bg-[#FAF9F5] text-[#202A24] flex font-sans selection:bg-[#DCEFE3] selection:text-[#064E36]">
@@ -202,6 +268,12 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
           onSignOut={onSignOut}
           lowStockCount={lowStockCount}
           outOfStockCount={outOfStockCount}
+          alertProducts={alertProducts}
+          onInformSupplier={(prod) => setSupplierModalProduct(prod)}
+          onTakeAction={(prod) => {
+            setSearchQuery(prod.sku);
+            setCurrentTab('inventory');
+          }}
           merchantName={merchantName}
           merchantEmail={merchantEmail}
         />
@@ -227,6 +299,9 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
               onEditProduct={handleOpenEdit}
               onDeleteProduct={handleOpenDelete}
               onAdjustStock={handleAdjustStock}
+              onInformSupplier={(prod) => setSupplierModalProduct(prod)}
+              onSuggestDeadStockSolutions={(prod) => setDeadStockModalProduct(prod)}
+              onOpenPaymentDiscounts={(prod) => setPaymentModalProduct(prod)}
               onClearCatalog={handleClearCatalog}
               searchQuery={searchQuery}
               onSearchChange={setSearchQuery}
@@ -264,7 +339,8 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
             <StockManagementPage
               products={products}
               onAdjustStock={handleAdjustStock}
-              onEditProduct={handleOpenEdit}
+              onInformSupplier={(prod) => setSupplierModalProduct(prod)}
+              onSuggestDeadStockSolutions={(prod) => setDeadStockModalProduct(prod)}
               onNavigateTab={setCurrentTab}
               merchantName={merchantName}
             />
@@ -317,6 +393,29 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
           setProductToDelete(null);
         }}
         onConfirm={handleConfirmDelete}
+      />
+
+      <SupplierContactModal
+        product={supplierModalProduct}
+        isOpen={!!supplierModalProduct}
+        onClose={() => setSupplierModalProduct(null)}
+        onSaveSupplierInfo={handleSaveSupplierInfo}
+      />
+
+      <DeadStockSolutionsModal
+        product={deadStockModalProduct}
+        isOpen={!!deadStockModalProduct}
+        onClose={() => setDeadStockModalProduct(null)}
+        onApplyMarkdown={handleApplyDeadStockMarkdown}
+        onRebalanceStock={handleRebalanceDeadStock}
+        onOpenPaymentDiscounts={(prod) => setPaymentModalProduct(prod)}
+      />
+
+      <PaymentDiscountModal
+        product={paymentModalProduct}
+        isOpen={!!paymentModalProduct}
+        onClose={() => setPaymentModalProduct(null)}
+        onSavePaymentOffers={handleSavePaymentOffers}
       />
     </div>
   );

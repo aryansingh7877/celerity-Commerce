@@ -72,10 +72,20 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
 }) => {
   const currentCityStock = product.cityStock[city] ?? 0;
   const [quantity, setQuantity] = useState<number>(1);
+  const galleryImages =
+    product.images && product.images.length > 0
+      ? product.images
+      : [product.image];
+  const [activeImage, setActiveImage] = useState<string>(galleryImages[0] || product.image);
 
   useEffect(() => {
     setQuantity(1);
-  }, [product.id, city]);
+    const imgs =
+      product.images && product.images.length > 0
+        ? product.images
+        : [product.image];
+    setActiveImage(imgs[0] || product.image);
+  }, [product.id, product.image, product.images, city]);
 
   const badge = getStockBadgeMeta(currentCityStock);
   const currentHubMeta = CITIES.find((c) => c.name === city) || CITIES[0];
@@ -125,7 +135,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           <div className="lg:col-span-5 flex flex-col justify-between space-y-4">
             <div className="relative aspect-square rounded-[24px] bg-[#FAF9F5] border border-[#E8EBE7] overflow-hidden flex items-center justify-center p-6">
               <img
-                src={product.image}
+                src={activeImage || product.image}
                 alt={product.name}
                 className="w-full h-full object-contain rounded-2xl transition-transform duration-500 hover:scale-105"
               />
@@ -158,6 +168,29 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 </span>
               </div>
             </div>
+
+            {galleryImages.length > 1 && (
+              <div className="grid grid-cols-4 gap-2.5">
+                {galleryImages.map((imgUrl, idx) => (
+                  <button
+                    key={`${imgUrl}-${idx}`}
+                    type="button"
+                    onClick={() => setActiveImage(imgUrl)}
+                    className={`aspect-square rounded-xl border p-1.5 bg-[#FAF9F5] overflow-hidden cursor-pointer transition-all ${
+                      activeImage === imgUrl
+                        ? 'border-[#064E36] ring-2 ring-[#064E36]/20 bg-white'
+                        : 'border-[#E8EBE7] opacity-75 hover:opacity-100'
+                    }`}
+                  >
+                    <img
+                      src={imgUrl}
+                      alt={`${product.name} view ${idx + 1}`}
+                      className="w-full h-full object-contain"
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Trust & Fulfillment strip */}
             <div className="grid grid-cols-3 gap-3">

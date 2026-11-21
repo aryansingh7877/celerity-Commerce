@@ -20,6 +20,9 @@ interface InventoryPageProps {
   onEditProduct: (product: Product) => void;
   onDeleteProduct: (product: Product) => void;
   onAdjustStock: (productId: string, delta: number) => void;
+  onInformSupplier?: (product: Product) => void;
+  onSuggestDeadStockSolutions?: (product: Product) => void;
+  onOpenPaymentDiscounts?: (product: Product) => void;
   onClearCatalog?: () => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
@@ -36,6 +39,9 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   onEditProduct,
   onDeleteProduct,
   onAdjustStock,
+  onInformSupplier,
+  onSuggestDeadStockSolutions,
+  onOpenPaymentDiscounts,
   onClearCatalog,
   searchQuery,
   onSearchChange,
@@ -308,6 +314,9 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
         onEditProduct={onEditProduct}
         onDeleteProduct={onDeleteProduct}
         onAdjustStock={onAdjustStock}
+        onInformSupplier={onInformSupplier}
+        onSuggestDeadStockSolutions={onSuggestDeadStockSolutions}
+        onOpenPaymentDiscounts={onOpenPaymentDiscounts}
       />
     </div>
   );

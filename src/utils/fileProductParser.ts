@@ -11,6 +11,8 @@ export interface ParsedProductItem {
   location: 'Bangalore' | 'Mumbai' | 'Delhi';
   image: string;
   description: string;
+  supplierName?: string;
+  supplierPhone?: string;
 }
 
 const makePlaceholderSvg = (label: string, accent = '#064E36') => {
@@ -458,6 +460,14 @@ function rowToProduct(
   if (embedded) image = embedded;
   else if (imageCell && looksLikeImageUrl(imageCell)) image = imageCell;
 
+  const rawSupplierName = get('suppliername', 'supplier', 'vendor', 'distributor');
+  const rawSupplierPhone = get('supplierphonenumber', 'supplierphone', 'vendorphone', 'phone', 'contact');
+
+  const defaultSupplierName =
+    rawSupplierName ||
+    (brand ? `${brand} Authorized India Distributor` : 'Celerity Regional Supply Partner');
+  const defaultSupplierPhone = rawSupplierPhone || '+91 98450 11223';
+
   return {
     name,
     sku,
@@ -467,6 +477,8 @@ function rowToProduct(
     location,
     image,
     description,
+    supplierName: defaultSupplierName,
+    supplierPhone: defaultSupplierPhone,
   };
 }
 
@@ -687,10 +699,10 @@ export function getSampleExtractedProducts(sourceName: string): ParsedProductIte
 
 export function generateSampleCSV(): string {
   return [
-    'name,sku,category,price,stock,location,description,image',
-    'Sony Wireless Studio Pro,AUD-020,Headphones,19999,30,Bangalore,Premium over-ear studio monitor headphones,https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=600&q=80',
-    'Beats Fit Sport Earphones,AUD-021,Earphones,14990,45,Mumbai,Secure-fit wingtips with sweat resistance,https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=600&q=80',
-    'MacBook Air M3 15-Inch,LAP-010,Laptops,134900,10,Delhi,Liquid Retina display with Apple M3 chip,https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=600&q=80',
-    'Google Pixel 9 Pro 5G,MOB-015,Smartphones,109999,22,Bangalore,Advanced AI camera system with Super Actua display,https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=600&q=80',
+    'Image,SKU_ID,Brand,Series,Model_Name,Category,Processor,RAM,Storage,Display,Graphics,OS,MRP_INR,Retail_Price_INR,Stock,Location,Warranty,Image_File,Source,Supplier name,Supplier phone number',
+    'https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=600&q=80,LAP-DEL-001,Dell,Inspiron,Dell Inspiron 15 3530,Everyday / Student,Intel Core i5-1335U,16GB DDR4,512GB NVMe SSD,15.6-inch FHD 120Hz,Intel Iris Xe,Windows 11 Home,62990,54990,14,Bangalore,1 Year Onsite,LAP-DEL-001.jpg,Official Catalog,Dell India Enterprise Distribution,+91 98450 11223',
+    'https://images.unsplash.com/photo-1525547719571-a2d4ac8945e2?auto=format&fit=crop&w=600&q=80,LAP-HP-001,HP,Pavilion,HP Pavilion 15-eg3081TU,Everyday / Student,Intel Core i5-1340P,16GB DDR4,512GB PCIe SSD,15.6-inch FHD IPS,Intel Iris Xe,Windows 11 Home,72990,63490,4,Mumbai,1 Year Onsite,LAP-HP-001.jpg,Official Catalog,HP Savex Logistics Mumbai,+91 98201 44556',
+    'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=600&q=80,LAP-LEN-003,Lenovo,ThinkPad,Lenovo ThinkPad E14 Gen 5,Business / Office,AMD Ryzen 5 7530U,16GB DDR4,512GB NVMe SSD,14.0-inch WUXGA IPS,AMD Radeon Graphics,Windows 11 Pro,74990,62490,2,Delhi,1 Year Onsite,LAP-LEN-003.jpg,Official Catalog,Lenovo Ingrid NCR Supply,+91 98112 77889',
+    'https://images.unsplash.com/photo-1588872657578-7efd1f1555ed?auto=format&fit=crop&w=600&q=80,LAP-ASU-001,Asus,VivoBook,Asus Vivobook 15 X1504ZA,Everyday / Student,Intel Core i5-1235U,16GB DDR4,512GB NVMe SSD,15.6-inch FHD 60Hz,Intel Iris Xe,Windows 11 Home,58990,48990,25,Bangalore,1 Year Global,LAP-ASU-001.jpg,Official Catalog,Asus Rashi Peripherals Hub,+91 98802 33441',
   ].join('\n');
 }

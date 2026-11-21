@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -12,7 +12,7 @@ import {
   ShoppingBag,
 } from 'lucide-react';
 import type { Product as StorefrontProduct } from '../../data/products';
-import { loadStorefrontCatalog } from '../../lib/merchantInventoryStore';
+import { api, ApiError } from '../../lib/api';
 
 export interface CartLine {
   product: StorefrontProduct;
@@ -23,66 +23,101 @@ interface CartDrawerProps {
   open: boolean;
   onClose: () => void;
   lines: CartLine[];
+  city: string;
   onUpdateQty: (productId: string, quantity: number) => void;
   onRemove: (productId: string) => void;
   onReplace: (unavailableId: string, replacement: StorefrontProduct) => void;
   onClear: () => void;
+  onRefreshCatalog?: () => void;
 }
 
-function isConflict(line: CartLine) {
-  return line.quantity > line.product.stock || !line.product.inStock;
-}
+type Alt = {
+  id: string;
+  name: string;
+  brand: string;
+  price: number;
+  imageUrl: string;
+  stock: number;
+  reason: string;
+  isDeadStock?: boolean;
+};
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
   open,
   onClose,
   lines,
+  city,
   onUpdateQty,
   onRemove,
   onReplace,
   onClear,
+  onRefreshCatalog,
 }) => {
   const [checkoutStep, setCheckoutStep] = useState<'cart' | 'rescue' | 'done'>('cart');
-  const catalog = useMemo(() => loadStorefrontCatalog(), [open, lines]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [orderId, setOrderId] = useState<string | null>(null);
+  const [alts, setAlts] = useState<Record<string, Alt[]>>({});
 
-  const conflicts = lines.filter(isConflict);
+  const conflicts = lines.filter((l) => l.quantity > l.product.stock || !l.product.inStock);
   const subtotal = lines.reduce((s, l) => s + l.product.price * l.quantity, 0);
   const shipping = lines.length ? 99 : 0;
 
   useEffect(() => {
-    if (!open) setCheckoutStep('cart');
+    if (!open) {
+      setCheckoutStep('cart');
+      setError(null);
+      setOrderId(null);
+    }
   }, [open]);
 
-  useEffect(() => {
-    if (checkoutStep === 'rescue' && conflicts.length === 0) {
-      setCheckoutStep('cart');
+  const loadRescue = async (productIds: string[]) => {
+    const next: Record<string, Alt[]> = {};
+    for (const id of productIds) {
+      try {
+        const res = await api<{ alternatives: Alt[] }>('/api/rescue/suggestions', {
+          method: 'POST',
+          body: JSON.stringify({ productId: id, city }),
+        });
+        next[id] = res.alternatives || [];
+      } catch {
+        next[id] = [];
+      }
     }
-  }, [checkoutStep, conflicts.length]);
-
-  const alternativesFor = (line: CartLine): StorefrontProduct[] => {
-    return catalog
-      .filter(
-        (p) =>
-          p.id !== line.product.id &&
-          p.inStock &&
-          p.stock > 0 &&
-          (p.category === line.product.category ||
-            Math.abs(p.price - line.product.price) / Math.max(line.product.price, 1) < 0.35)
-      )
-      .sort(
-        (a, b) =>
-          Math.abs(a.price - line.product.price) - Math.abs(b.price - line.product.price)
-      )
-      .slice(0, 4);
+    setAlts(next);
   };
 
-  const handleCheckout = () => {
-    if (conflicts.length > 0) {
-      setCheckoutStep('rescue');
-      return;
+  const handleCheckout = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const payload = {
+        city,
+        lines: lines.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
+      };
+      await api('/api/cart/validate', { method: 'POST', body: JSON.stringify(payload) });
+      const result = await api<{ order: { id: string } }>('/api/orders', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      setOrderId(result.order.id);
+      setCheckoutStep('done');
+      onClear();
+      onRefreshCatalog?.();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setCheckoutStep('rescue');
+        const ids = conflicts.length
+          ? conflicts.map((c) => c.product.id)
+          : lines.map((l) => l.product.id);
+        await loadRescue(ids);
+        setError('Stock conflict — choose a Smart Basket Rescue swap');
+      } else {
+        setError(err instanceof Error ? err.message : 'Checkout failed');
+      }
+    } finally {
+      setBusy(false);
     }
-    setCheckoutStep('done');
-    onClear();
   };
 
   const closeAll = () => {
@@ -120,7 +155,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       : 'Your Basket'}
                 </p>
                 <h2 className="font-display font-black text-lg text-[#0A2540]">
-                  {checkoutStep === 'done' ? 'All set' : `${lines.length} item${lines.length === 1 ? '' : 's'}`}
+                  {checkoutStep === 'done'
+                    ? 'All set'
+                    : `${lines.length} item${lines.length === 1 ? '' : 's'}`}
                 </h2>
               </div>
               <button
@@ -133,12 +170,19 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              {error && (
+                <div className="rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-semibold p-3">
+                  {error}
+                </div>
+              )}
+
               {checkoutStep === 'done' && (
                 <div className="rounded-2xl bg-white border border-[#C8E8D9] p-6 text-center">
                   <CheckCircle2 className="w-10 h-10 text-[#65B99B] mx-auto mb-3" />
                   <p className="font-display font-bold text-[#0A2540]">Order authorized</p>
                   <p className="text-xs text-[#101413]/60 mt-1">
-                    Fulfilled from merchant-uploaded inventory. No demo SKUs.
+                    Order {orderId?.slice(0, 8)}… saved in Aiven PostgreSQL. Inventory decremented
+                    atomically.
                   </p>
                 </div>
               )}
@@ -147,7 +191,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 <div className="rounded-2xl border border-dashed border-[#101413]/15 bg-white p-8 text-center">
                   <ShoppingBag className="w-8 h-8 text-[#65B99B] mx-auto mb-2" />
                   <p className="text-sm font-bold text-[#0A2540]">Basket is empty</p>
-                  <p className="text-xs text-[#101413]/55 mt-1">Add products from the live catalog.</p>
                 </div>
               )}
 
@@ -163,21 +206,23 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     >
                       <div className="flex gap-3">
                         <img
-                          src={line.product.image}
+                          src={line.product.image || ''}
                           alt={line.product.name}
                           className="w-16 h-16 rounded-xl object-cover bg-[#EAF4EC]"
                         />
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-bold text-[#0A2540] truncate">{line.product.name}</p>
+                          <p className="text-xs font-bold text-[#0A2540] truncate">
+                            {line.product.name}
+                          </p>
                           <p className="text-[10px] text-[#101413]/50">
-                            {line.product.city} · {line.product.stock} available
+                            {city} · {line.product.stock} available
                           </p>
                           <p className="text-sm font-extrabold text-[#0A2540] mt-1">
                             ₹{(line.product.price * line.quantity).toLocaleString('en-IN')}
                           </p>
                           {blocked && (
                             <p className="text-[10px] font-bold text-red-600 mt-1 flex items-center gap-1">
-                              <AlertTriangle className="w-3 h-3" /> Stock conflict — rescue at checkout
+                              <AlertTriangle className="w-3 h-3" /> Stock conflict
                             </p>
                           )}
                         </div>
@@ -225,59 +270,62 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       Smart Basket Rescue
                     </div>
                     <p className="text-sm font-bold mt-1">
-                      {conflicts.length} item{conflicts.length === 1 ? '' : 's'} need a swap to keep your
-                      order.
-                    </p>
-                    <p className="text-[11px] text-white/70 mt-1">
-                      Other cart lines stay intact — only unavailable SKUs are replaced.
+                      Swap unavailable items (±20% price, same category, dead-stock boosted).
                     </p>
                   </div>
-
-                  {conflicts.map((line) => {
-                    const alts = alternativesFor(line);
-                    return (
-                      <div key={line.product.id} className="rounded-2xl bg-white border border-red-200 p-4 space-y-3">
-                        <div className="flex gap-3 items-center">
-                          <img
-                            src={line.product.image}
-                            alt=""
-                            className="w-12 h-12 rounded-xl object-cover opacity-60"
-                          />
-                          <div>
-                            <p className="text-xs font-bold text-[#0A2540] line-through opacity-70">
-                              {line.product.name}
-                            </p>
-                            <p className="text-[10px] text-red-600 font-bold">
-                              Requested {line.quantity} · available {line.product.stock}
-                            </p>
-                          </div>
-                        </div>
-                        {alts.length === 0 ? (
-                          <p className="text-[11px] text-[#7C877F]">No in-stock alternatives in catalog.</p>
-                        ) : (
-                          alts.map((alt) => (
-                            <button
-                              key={alt.id}
-                              type="button"
-                              onClick={() => onReplace(line.product.id, alt)}
-                              className="w-full flex items-center gap-3 p-2.5 rounded-xl border border-[#101413]/8 hover:border-[#65B99B] hover:bg-[#C8E8D9]/20 text-left cursor-pointer transition-all"
-                            >
-                              <img src={alt.image} alt="" className="w-11 h-11 rounded-lg object-cover" />
-                              <div className="min-w-0 flex-1">
-                                <p className="text-[11px] font-bold text-[#0A2540] truncate">{alt.name}</p>
-                                <p className="text-[10px] text-[#101413]/55">
-                                  {alt.city} · {alt.stock} in stock · ₹{alt.price.toLocaleString('en-IN')}
-                                </p>
-                              </div>
-                              <span className="text-[10px] font-bold text-[#064E36] bg-[#DCEFE3] px-2 py-1 rounded-lg">
-                                1-Click Swap
-                              </span>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    );
-                  })}
+                  {(conflicts.length ? conflicts : lines).map((line) => (
+                    <div
+                      key={line.product.id}
+                      className="rounded-2xl bg-white border border-red-200 p-4 space-y-3"
+                    >
+                      <p className="text-xs font-bold text-[#0A2540] line-through opacity-70">
+                        {line.product.name}
+                      </p>
+                      {(alts[line.product.id] || []).length === 0 ? (
+                        <p className="text-[11px] text-[#7C877F]">No in-stock alternatives.</p>
+                      ) : (
+                        (alts[line.product.id] || []).map((alt) => (
+                          <button
+                            key={alt.id}
+                            type="button"
+                            onClick={() => {
+                              onReplace(line.product.id, {
+                                id: alt.id,
+                                name: alt.name,
+                                brand: alt.brand,
+                                category: line.product.category,
+                                price: alt.price,
+                                image: alt.imageUrl,
+                                city,
+                                stock: alt.stock,
+                                inStock: alt.stock > 0,
+                                rating: 4.8,
+                                reviewsCount: 10,
+                              });
+                              setCheckoutStep('cart');
+                              setError(null);
+                            }}
+                            className="w-full flex items-center gap-3 p-2.5 rounded-xl border border-[#101413]/8 hover:border-[#65B99B] text-left cursor-pointer"
+                          >
+                            <img
+                              src={alt.imageUrl || ''}
+                              alt=""
+                              className="w-11 h-11 rounded-lg object-cover bg-[#EAF4EC]"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[11px] font-bold text-[#0A2540] truncate">
+                                {alt.name}
+                              </p>
+                              <p className="text-[10px] text-[#101413]/55">{alt.reason}</p>
+                            </div>
+                            <span className="text-[10px] font-bold text-[#064E36] bg-[#DCEFE3] px-2 py-1 rounded-lg">
+                              Swap
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -300,11 +348,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 {checkoutStep === 'cart' ? (
                   <button
                     type="button"
-                    disabled={lines.length === 0}
+                    disabled={lines.length === 0 || busy}
                     onClick={handleCheckout}
                     className="w-full py-3 rounded-2xl bg-[#0A2540] hover:bg-[#101413] disabled:opacity-40 text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    {conflicts.length > 0 ? (
+                    {busy ? (
+                      'Placing…'
+                    ) : conflicts.length > 0 ? (
                       <>
                         <Sparkles className="w-4 h-4 text-[#E8C86B]" />
                         Checkout with Rescue

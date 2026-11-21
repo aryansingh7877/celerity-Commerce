@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   ShoppingBag,
@@ -13,17 +13,15 @@ import {
   CheckCircle2,
   AlertCircle,
 } from 'lucide-react';
-import {
-  CATALOG_UPDATED_EVENT,
-  loadStorefrontCatalog,
-} from '../../lib/merchantInventoryStore';
-import { fuzzyScore, interpretQuery } from '../../lib/shopSearch';
+import { interpretQuery } from '../../lib/shopSearch';
 import type { Product as StorefrontProduct } from '../../data/products';
 import { CartDrawer, CartLine } from './CartDrawer';
 import { useAuth } from '../../context/AuthContext';
+import { api } from '../../lib/api';
 
-const HUBS = ['All Hubs', 'Bangalore', 'Mumbai', 'Delhi'] as const;
+const HUBS = ['Bengaluru', 'Mumbai', 'Delhi'] as const;
 const CART_KEY = 'celerity_customer_cart_v1';
+const CITY_KEY = 'celerity_customer_city_v1';
 
 interface CustomerStorefrontProps {
   onOpenMerchant: () => void;
@@ -40,19 +38,39 @@ function loadCart(): CartLine[] {
   }
 }
 
-function saveCart(lines: CartLine[]) {
-  try {
-    localStorage.setItem(CART_KEY, JSON.stringify(lines));
-  } catch {
-    /* ignore quota */
-  }
+function mapApiItem(item: Record<string, unknown>, city: string): StorefrontProduct {
+  const id = String(item.productId ?? item.id);
+  const price = Number(item.price ?? item.offerPrice ?? 0);
+  const stock = Number(item.stock ?? 0);
+  return {
+    id,
+    name: String(item.name ?? ''),
+    brand: String(item.brand ?? ''),
+    category: String(item.category ?? ''),
+    price,
+    image: String(item.imageUrl ?? item.image_url ?? ''),
+    city,
+    stock,
+    inStock: stock > 0,
+    rating: 4.8,
+    reviewsCount: Math.max(8, stock * 2),
+  };
 }
 
-export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({ onOpenMerchant }) => {
+export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({
+  onOpenMerchant,
+}) => {
   const { profile, user, signOut } = useAuth();
-  const [catalog, setCatalog] = useState<StorefrontProduct[]>(() => loadStorefrontCatalog());
+  const [catalog, setCatalog] = useState<StorefrontProduct[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchMode, setSearchMode] = useState<string>('');
   const [query, setQuery] = useState('');
-  const [hub, setHub] = useState<(typeof HUBS)[number]>('All Hubs');
+  const [hub, setHub] = useState<(typeof HUBS)[number]>(() => {
+    const saved = localStorage.getItem(CITY_KEY);
+    if (saved === 'Bangalore') return 'Bengaluru';
+    if (saved && HUBS.includes(saved as (typeof HUBS)[number])) return saved as (typeof HUBS)[number];
+    return (profile?.preferred_city as (typeof HUBS)[number]) || 'Bengaluru';
+  });
   const [category, setCategory] = useState('All');
   const [inStockOnly, setInStockOnly] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
@@ -60,30 +78,51 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({ onOpenMe
   const [addedId, setAddedId] = useState<string | null>(null);
 
   useEffect(() => {
-    const refresh = () => {
-      const next = loadStorefrontCatalog();
-      setCatalog(next);
-      // refresh cart product snapshots from latest catalog
-      setCart((prev) =>
-        prev
-          .map((line) => {
-            const fresh = next.find((p) => p.id === line.product.id);
-            return fresh ? { ...line, product: fresh } : null;
-          })
-          .filter(Boolean) as CartLine[]
-      );
-    };
-    window.addEventListener(CATALOG_UPDATED_EVENT, refresh);
-    window.addEventListener('storage', refresh);
-    return () => {
-      window.removeEventListener(CATALOG_UPDATED_EVENT, refresh);
-      window.removeEventListener('storage', refresh);
-    };
-  }, []);
+    localStorage.setItem(CITY_KEY, hub);
+  }, [hub]);
 
   useEffect(() => {
-    saveCart(cart);
+    localStorage.setItem(CART_KEY, JSON.stringify(cart));
   }, [cart]);
+
+  const refreshCatalog = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ city: hub, pageSize: '48' });
+      if (query.trim()) params.set('q', query.trim());
+      if (category !== 'All') params.set('category', category);
+      if (inStockOnly) params.set('inStockOnly', 'true');
+      const path = query.trim() ? `/api/search?${params}` : `/api/products?${params}`;
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://127.0.0.1:4000'}${path}`);
+      const mode = res.headers.get('X-Search-Mode') || '';
+      setSearchMode(mode);
+      const data = await res.json();
+      const items = (data.items || data.products || []) as Record<string, unknown>[];
+      setCatalog(items.map((i) => mapApiItem(i, hub)));
+    } catch {
+      setCatalog([]);
+      setSearchMode('offline');
+    } finally {
+      setLoading(false);
+    }
+  }, [hub, query, category, inStockOnly]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      refreshCatalog();
+    }, 200);
+    // Live stock: poll + refresh when tab regains focus (after checkout elsewhere)
+    const poll = setInterval(() => {
+      void refreshCatalog();
+    }, 12_000);
+    const onFocus = () => void refreshCatalog();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearTimeout(t);
+      clearInterval(poll);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [refreshCatalog]);
 
   const categories = useMemo(() => {
     const cats = Array.from(new Set(catalog.map((p) => p.category).filter(Boolean)));
@@ -91,42 +130,15 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({ onOpenMe
   }, [catalog]);
 
   const interpretation = interpretQuery(query);
-
-  const filtered = useMemo(() => {
-    return catalog
-      .map((p) => {
-        const hay = `${p.name} ${p.brand} ${p.category} ${p.city}`;
-        const score = fuzzyScore(query, hay);
-        return { p, score };
-      })
-      .filter(({ p, score }) => {
-        if (query.trim() && score < 0.45) return false;
-        if (hub !== 'All Hubs' && p.city !== hub) return false;
-        if (category !== 'All' && p.category !== category) return false;
-        if (inStockOnly && !p.inStock) return false;
-        return true;
-      })
-      .sort((a, b) => b.score - a.score)
-      .map(({ p }) => p);
-  }, [catalog, query, hub, category, inStockOnly]);
-
   const cartCount = cart.reduce((s, l) => s + l.quantity, 0);
 
   const addToCart = (product: StorefrontProduct) => {
-    if (!product.inStock || product.stock <= 0) {
-      setCartOpen(true);
-      setCart((prev) => {
-        if (prev.some((l) => l.product.id === product.id)) return prev;
-        return [...prev, { product: { ...product, inStock: false, stock: 0 }, quantity: 1 }];
-      });
-      return;
-    }
     setCart((prev) => {
       const existing = prev.find((l) => l.product.id === product.id);
       if (existing) {
         return prev.map((l) =>
           l.product.id === product.id
-            ? { ...l, quantity: Math.min(l.quantity + 1, product.stock) }
+            ? { ...l, quantity: Math.min(l.quantity + 1, Math.max(product.stock, 1)) }
             : l
         );
       }
@@ -157,7 +169,6 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({ onOpenMe
 
   return (
     <div className="min-h-screen bg-[#F8F8F3] text-[#101413] selection:bg-[#65B99B] selection:text-white">
-      {/* Shop header */}
       <header className="sticky top-0 z-40 border-b border-[#101413]/8 bg-[#F8F8F3]/90 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center justify-between gap-3">
@@ -170,7 +181,11 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({ onOpenMe
                   Celerity<span className="text-[#65B99B] font-normal ml-1">Shop</span>
                 </p>
                 <p className="text-[10px] uppercase tracking-wider font-semibold text-[#101413]/45">
-                  Live merchant catalog
+                  {searchMode === 'opensearch'
+                    ? 'OpenSearch'
+                    : searchMode === 'postgres'
+                      ? 'Degraded · Postgres'
+                      : 'Live catalog'}
                 </p>
               </div>
             </div>
@@ -252,7 +267,6 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({ onOpenMe
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        {/* Feature strip */}
         <div className="grid sm:grid-cols-3 gap-3">
           {[
             {
@@ -263,12 +277,12 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({ onOpenMe
             {
               icon: MapPin,
               title: 'Multi-hub inventory',
-              body: 'Filter Bangalore · Mumbai · Delhi stock from admin upload.',
+              body: 'Bengaluru · Mumbai · Delhi stock from Aiven PostgreSQL.',
             },
             {
               icon: Search,
-              title: 'Typo-tolerant search',
-              body: '“labtop” still finds laptops in the live catalog.',
+              title: 'OpenSearch + fallback',
+              body: 'Typo-tolerant search; Postgres if OpenSearch is down.',
             },
           ].map((f) => (
             <div
@@ -286,7 +300,6 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({ onOpenMe
           ))}
         </div>
 
-        {/* Filters */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[#7C877F]">
@@ -318,60 +331,34 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({ onOpenMe
           </label>
         </div>
 
-        {/* Mobile hub + admin */}
-        <div className="flex lg:hidden items-center gap-2">
-          <select
-            value={hub}
-            onChange={(e) => setHub(e.target.value as (typeof HUBS)[number])}
-            className="flex-1 px-3 py-2 rounded-xl bg-white border border-[#101413]/10 text-xs font-semibold"
-          >
-            {HUBS.map((h) => (
-              <option key={h} value={h}>
-                {h}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={onOpenMerchant}
-            className="px-3 py-2 rounded-xl bg-white border border-[#101413]/10 text-xs font-bold"
-          >
-            Admin
-          </button>
-        </div>
-
-        {/* Catalog */}
-        {catalog.length === 0 ? (
+        {loading ? (
+          <div className="rounded-2xl bg-white border border-[#E8EBE7] p-10 text-center text-sm text-[#7C877F]">
+            Loading catalog…
+          </div>
+        ) : catalog.length === 0 ? (
           <div className="rounded-3xl border border-dashed border-[#C8E8D9] bg-white px-6 py-16 text-center">
             <Package className="w-10 h-10 text-[#65B99B] mx-auto mb-3" />
             <h2 className="font-display text-xl font-black text-[#0A2540]">Shop is empty</h2>
             <p className="text-sm text-[#101413]/60 mt-2 max-w-md mx-auto">
-              No demo products. When the admin uploads an Excel / CSV catalog, those SKUs appear here
-              for shopping.
+              No products available for this hub yet.
             </p>
-            <button
-              type="button"
-              onClick={onOpenMerchant}
-              className="mt-5 inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-[#064E36] text-white text-sm font-bold cursor-pointer"
-            >
-              <LayoutDashboard className="w-4 h-4" />
-              Go to Merchant Admin
-            </button>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="rounded-2xl bg-white border border-[#E8EBE7] p-10 text-center text-sm text-[#7C877F]">
-            No products match your filters.
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
-            {filtered.map((prod) => (
+            {catalog.map((prod) => (
               <motion.article
                 key={prod.id}
                 layout
                 className="rounded-3xl bg-white border border-[#101413]/8 p-4 shadow-2xs flex flex-col"
               >
                 <div className="relative aspect-square rounded-2xl overflow-hidden bg-[#EAF4EC] mb-3">
-                  <img src={prod.image} alt={prod.name} className="w-full h-full object-cover" />
+                  {prod.image ? (
+                    <img src={prod.image} alt={prod.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-[#65B99B]">
+                      <Package className="w-10 h-10" />
+                    </div>
+                  )}
                   <div className="absolute top-2 right-2">
                     {prod.inStock ? (
                       <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[#101413]/75 text-[10px] font-bold text-[#65B99B]">
@@ -411,13 +398,9 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({ onOpenMe
                     <>
                       <CheckCircle2 className="w-3.5 h-3.5" /> Added
                     </>
-                  ) : prod.inStock ? (
-                    <>
-                      <Plus className="w-3.5 h-3.5" /> Add to basket
-                    </>
                   ) : (
                     <>
-                      <Sparkles className="w-3.5 h-3.5 text-[#E8C86B]" /> Add · Rescue at checkout
+                      <Plus className="w-3.5 h-3.5" /> Add to basket
                     </>
                   )}
                 </button>
@@ -431,10 +414,12 @@ export const CustomerStorefront: React.FC<CustomerStorefrontProps> = ({ onOpenMe
         open={cartOpen}
         onClose={() => setCartOpen(false)}
         lines={cart}
+        city={hub}
         onUpdateQty={updateQty}
         onRemove={(id) => setCart((prev) => prev.filter((l) => l.product.id !== id))}
         onReplace={replaceLine}
         onClear={() => setCart([])}
+        onRefreshCatalog={refreshCatalog}
       />
     </div>
   );

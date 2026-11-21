@@ -13,6 +13,10 @@ import {
   ExternalLink,
   ChevronRight,
   ShieldCheck,
+  ClipboardList,
+  Truck,
+  Bell,
+  Archive,
 } from 'lucide-react';
 import { MerchantTab } from '../../../types/product';
 
@@ -76,6 +80,36 @@ export const MerchantSidebar: React.FC<MerchantSidebarProps> = ({
       label: 'Store Locations',
       icon: MapPin,
       badge: '3 Hubs',
+    },
+    {
+      id: 'orders' as MerchantTab,
+      label: 'Orders',
+      icon: ClipboardList,
+      badge: null,
+    },
+    {
+      id: 'deadstock' as MerchantTab,
+      label: 'Dead Stock',
+      icon: Archive,
+      badge: null,
+    },
+    {
+      id: 'suppliers' as MerchantTab,
+      label: 'Suppliers',
+      icon: Truck,
+      badge: null,
+    },
+    {
+      id: 'restock' as MerchantTab,
+      label: 'Restock',
+      icon: Package,
+      badge: null,
+    },
+    {
+      id: 'notifications' as MerchantTab,
+      label: 'Notifications',
+      icon: Bell,
+      badge: null,
     },
     {
       id: 'settings' as MerchantTab,

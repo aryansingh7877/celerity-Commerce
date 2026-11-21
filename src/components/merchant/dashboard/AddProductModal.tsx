@@ -193,8 +193,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     setExtractedProducts((prev) => prev.filter((_, idx) => idx !== index));
   };
 
-  // Import All Extracted Products
-  const handleImportAllExtracted = () => {
+  // Import All Extracted Products (client parser preserves images / laptop columns)
+  const handleImportAllExtracted = async () => {
     if (extractedProducts.length === 0) return;
 
     if (onAddBulkProducts) {

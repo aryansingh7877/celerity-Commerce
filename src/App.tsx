@@ -18,14 +18,16 @@ const LoadingScreen: React.FC = () => (
 );
 
 const AppContent: React.FC = () => {
-  const { user, profile, isLoading, signOut } = useAuth();
-  const [viewMode, setViewMode] = useState<'merchant' | 'storefront'>('storefront');
+  const { user, session, profile, isLoading, signOut } = useAuth();
+  // Same dual-mode switch as before: any signed-in user can open Admin or Customer view
+  const [viewMode, setViewMode] = useState<'merchant' | 'storefront'>('merchant');
 
   if (isLoading) {
     return <LoadingScreen />;
   }
 
-  if (!user) {
+  // Require a real Supabase JWT — fake/local fallback users cannot call the API
+  if (!session?.access_token || !user) {
     return <AuthPage />;
   }
 

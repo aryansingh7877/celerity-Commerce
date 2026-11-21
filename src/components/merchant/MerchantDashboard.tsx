@@ -1,6 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Product, MerchantTab, StoreLocation } from '../../types/product';
-import { loadCatalog, saveCatalog, clearCatalog } from '../../lib/merchantInventoryStore';
 import { MerchantSidebar } from './layout/MerchantSidebar';
 import { MerchantTopbar } from './layout/MerchantTopbar';
 import { OverviewPage } from './pages/Overview';
@@ -10,11 +9,26 @@ import { CategoriesPage } from './pages/Categories';
 import { StockManagementPage } from './pages/StockManagement';
 import { StoreLocationsPage } from './pages/StoreLocations';
 import { SettingsPage } from './pages/Settings';
+import {
+  DeadStockPage,
+  NotificationsPage,
+  OrdersAdminPage,
+  RestockPage,
+  SuppliersPage,
+} from './pages/AdminOpsPages';
 import { AddProductModal } from './dashboard/AddProductModal';
 import { EditProductModal } from './dashboard/EditProductModal';
 import { DeleteConfirmation } from './dashboard/DeleteConfirmation';
 import { CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import {
+  adjustAdminStock,
+  createAdminProduct,
+  deleteAdminProduct,
+  fetchAdminProducts,
+  updateAdminProduct,
+} from '../../lib/commerceApi';
+import { api } from '../../lib/api';
 
 interface MerchantDashboardProps {
   onExitToStorefront: () => void;
@@ -26,26 +40,20 @@ interface MerchantDashboardProps {
 export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
   onExitToStorefront,
   onSignOut,
-  merchantName = 'Aryan Singh',
-  merchantEmail = 'aryansingh787769@gmail.com',
+  merchantName = 'Merchant',
+  merchantEmail = '',
 }) => {
-  // ── 1. Core State — hydrate from saved catalog (empty until first upload) ──
-  const [products, setProducts] = useState<Product[]>(() => loadCatalog());
+  const [products, setProducts] = useState<Product[]>([]);
   const [currentTab, setCurrentTab] = useState<MerchantTab>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLocation, setSelectedLocation] = useState<StoreLocation>('All Locations');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const skipFirstSave = useRef(true);
-
-  // ── 2. Modals State ──
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [addModalPreferBulk, setAddModalPreferBulk] = useState(true);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [productToEdit, setProductToEdit] = useState<Product | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
-
-  // ── 3. Notification Toast ──
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -53,45 +61,50 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  // Persist inventory after every change (upload, edit, stock, delete)
-  useEffect(() => {
-    if (skipFirstSave.current) {
-      skipFirstSave.current = false;
-      return;
+  const refresh = useCallback(async () => {
+    try {
+      const rows = await fetchAdminProducts();
+      setProducts(rows);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to load inventory from API');
+      setProducts([]);
     }
-    const result = saveCatalog(products);
-    if (!result.ok && result.error) {
-      showToast(result.error);
-    }
-  }, [products]);
+  }, []);
 
-  // ── 4. Stock Adjustments (Prevent Negative Quantities) ──
-  const handleAdjustStock = (productId: string, delta: number) => {
-    setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id === productId) {
-          const newStock = Math.max(0, p.stock + delta);
-          return {
-            ...p,
-            stock: newStock,
-            lastUpdated: new Date().toISOString(),
-          };
-        }
-        return p;
-      })
-    );
+  useEffect(() => {
+    refresh();
+    // Keep admin stock in sync with customer checkouts / other tabs
+    const id = setInterval(() => {
+      void refresh();
+    }, 10_000);
+    const onFocus = () => void refresh();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [refresh]);
+
+  const handleAdjustStock = async (productId: string, delta: number) => {
+    const row = products.find((p) => p.id === productId);
+    if (!row) return;
+    const newStock = Math.max(0, row.stock + delta);
+    try {
+      await adjustAdminStock(productId, row.location, newStock);
+      await refresh();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Stock update failed');
+    }
   };
 
-  // ── 5. Add Single Product ──
-  const handleAddProduct = (newProd: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>) => {
-    const created: Product = {
-      ...newProd,
-      id: `prod-${Date.now().toString(36)}`,
-      createdAt: new Date().toISOString(),
-      lastUpdated: new Date().toISOString(),
-    };
-    setProducts((prev) => [created, ...prev]);
-    showToast(`Added "${created.name}" to inventory.`);
+  const handleAddProduct = async (newProd: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>) => {
+    try {
+      await createAdminProduct(newProd);
+      await refresh();
+      showToast(`Added "${newProd.name}" to Aiven inventory.`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Create failed');
+    }
   };
 
   const openAddModal = (preferBulk = products.length === 0) => {
@@ -99,68 +112,84 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     setIsAddModalOpen(true);
   };
 
-  // ── 5b. Bulk import replaces or upserts by SKU cleanly into catalog ──
-  const handleAddBulkProducts = (
-    newProds: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>[],
-    replaceExisting = true
+  const handleAddBulkProducts = async (
+    newProds: Omit<Product, 'id' | 'createdAt' | 'lastUpdated'>[]
   ) => {
-    const now = new Date().toISOString();
-    const createdList: Product[] = newProds.map((item, idx) => ({
-      ...item,
-      id: `prod-${Date.now().toString(36)}-${idx}`,
-      createdAt: now,
-      lastUpdated: now,
-    }));
-    setProducts((prev) => {
-      if (replaceExisting || prev.length === 0) return createdList;
-      const incomingSkus = new Set(createdList.map((p) => p.sku.toUpperCase()));
-      const kept = prev.filter((p) => !incomingSkus.has(p.sku.toUpperCase()));
-      return [...createdList, ...kept];
-    });
-    setCurrentTab('inventory');
-    setIsAddModalOpen(false);
-    showToast(`Imported ${createdList.length} classified SKUs to inventory.`);
+    try {
+      for (const p of newProds) {
+        // Skip giant data-URLs that blow up the API — keep http(s) / category defaults
+        const image =
+          p.image && p.image.startsWith('data:') && p.image.length > 200_000
+            ? 'https://images.unsplash.com/photo-1603302576837-37561b2e2302?auto=format&fit=crop&w=600&q=80'
+            : p.image;
+        await createAdminProduct({ ...p, image });
+      }
+      try {
+        await api('/api/admin/reindex', { method: 'POST' });
+      } catch {
+        /* search will fall back to Postgres */
+      }
+      await refresh();
+      setCurrentTab('overview');
+      setIsAddModalOpen(false);
+      showToast(`Imported ${newProds.length} products — now live in Customer View.`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Bulk import failed');
+    }
   };
 
-  const handleClearCatalog = () => {
-    clearCatalog();
-    setProducts([]);
-    showToast('Cleared catalog inventory.');
+  const handleClearCatalog = async () => {
+    try {
+      const uniqueIds = Array.from(new Set(products.map((p) => p.id.split(':')[0])));
+      for (const id of uniqueIds) {
+        await deleteAdminProduct(id);
+      }
+      await refresh();
+      showToast('Cleared catalog inventory.');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to clear catalog');
+    }
   };
 
-  // ── 6. Edit Product ──
   const handleOpenEdit = (product: Product) => {
     setProductToEdit(product);
     setIsEditModalOpen(true);
   };
 
-  const handleUpdateProduct = (updated: Product) => {
-    setProducts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-    showToast(`Updated "${updated.name}" details.`);
+  const handleUpdateProduct = async (updated: Product) => {
+    try {
+      await updateAdminProduct(updated);
+      await refresh();
+      showToast(`Updated "${updated.name}".`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Update failed');
+    }
   };
 
-  // ── 7. Delete Product ──
   const handleOpenDelete = (product: Product) => {
     setProductToDelete(product);
     setIsDeleteModalOpen(true);
   };
 
-  const handleConfirmDelete = () => {
-    if (productToDelete) {
-      setProducts((prev) => prev.filter((p) => p.id !== productToDelete.id));
-      showToast(`Removed "${productToDelete.name}" from catalog.`);
+  const handleConfirmDelete = async () => {
+    if (!productToDelete) return;
+    try {
+      await deleteAdminProduct(productToDelete.id);
+      await refresh();
+      showToast(`Removed "${productToDelete.name}".`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
       setIsDeleteModalOpen(false);
       setProductToDelete(null);
     }
   };
 
-  // Dynamic alert counts
   const lowStockCount = products.filter((p) => p.stock >= 1 && p.stock <= 10).length;
   const outOfStockCount = products.filter((p) => p.stock === 0).length;
 
   return (
     <div className="min-h-screen bg-[#FAF9F5] text-[#202A24] flex font-sans selection:bg-[#DCEFE3] selection:text-[#064E36]">
-      {/* Toast Notification */}
       <AnimatePresence>
         {toastMessage && (
           <motion.div
@@ -175,7 +204,6 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
         )}
       </AnimatePresence>
 
-      {/* ── Fixed Left Sidebar ── */}
       <MerchantSidebar
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
@@ -188,9 +216,7 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
         onCloseMobile={() => setIsMobileSidebarOpen(false)}
       />
 
-      {/* ── Main Content Area (Offset by Sidebar on Desktop) ── */}
       <div className="flex-1 lg:pl-72 flex flex-col min-w-0">
-        {/* Top Navigation Bar */}
         <MerchantTopbar
           currentTab={currentTab}
           searchQuery={searchQuery}
@@ -206,7 +232,6 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
           merchantEmail={merchantEmail}
         />
 
-        {/* Page Content Body */}
         <main className="flex-1 p-4 sm:p-8 lg:p-10 max-w-7xl w-full mx-auto">
           {currentTab === 'overview' && (
             <OverviewPage
@@ -219,7 +244,6 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
               merchantName={merchantName}
             />
           )}
-
           {currentTab === 'inventory' && (
             <InventoryPage
               products={products}
@@ -234,7 +258,6 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
               onSelectLocation={setSelectedLocation}
             />
           )}
-
           {currentTab === 'products' && (
             <ProductsPage
               products={products}
@@ -247,7 +270,6 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
               selectedLocation={selectedLocation}
             />
           )}
-
           {currentTab === 'categories' && (
             <CategoriesPage
               products={products}
@@ -259,7 +281,6 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
               onAdjustStock={handleAdjustStock}
             />
           )}
-
           {currentTab === 'stock' && (
             <StockManagementPage
               products={products}
@@ -269,7 +290,6 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
               merchantName={merchantName}
             />
           )}
-
           {currentTab === 'locations' && (
             <StoreLocationsPage
               products={products}
@@ -279,17 +299,17 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
               }}
             />
           )}
-
+          {currentTab === 'orders' && <OrdersAdminPage />}
+          {currentTab === 'deadstock' && <DeadStockPage />}
+          {currentTab === 'suppliers' && <SuppliersPage />}
+          {currentTab === 'restock' && <RestockPage />}
+          {currentTab === 'notifications' && <NotificationsPage />}
           {currentTab === 'settings' && (
-            <SettingsPage
-              merchantName={merchantName}
-              merchantEmail={merchantEmail}
-            />
+            <SettingsPage merchantName={merchantName} merchantEmail={merchantEmail} />
           )}
         </main>
       </div>
 
-      {/* ── Global Modals ── */}
       <AddProductModal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}

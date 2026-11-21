@@ -86,6 +86,8 @@ export async function createAdminProduct(input: Omit<Product, 'id' | 'createdAt'
       imageUrl: input.image,
       city,
       stock: input.stock,
+      supplierName: input.supplierName || undefined,
+      supplierPhone: input.supplierPhone || undefined,
     }),
   });
 }

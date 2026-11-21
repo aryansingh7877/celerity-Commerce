@@ -14,6 +14,8 @@ export interface Product {
   location: 'Bangalore' | 'Mumbai' | 'Delhi' | 'Bengaluru';
   image: string;
   description: string;
+  supplierName?: string;
+  supplierPhone?: string;
   createdAt: string;
   lastUpdated: string;
 }

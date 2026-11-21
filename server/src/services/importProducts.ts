@@ -141,7 +141,7 @@ function normalizeWhatsapp(raw: string): string | null {
   return digits.length >= 10 ? `+${digits}` : null;
 }
 
-async function upsertProductSupplier(
+export async function upsertProductSupplier(
   client: { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> },
   productId: string,
   supplierName: string,

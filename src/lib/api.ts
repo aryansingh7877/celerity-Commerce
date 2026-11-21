@@ -1,6 +1,6 @@
 import { supabase } from './supabase/client';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:4000';
+const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.PROD ? '' : 'http://127.0.0.1:4000');
 
 async function getAccessToken(): Promise<string | null> {
   const { data } = await supabase.auth.getSession();

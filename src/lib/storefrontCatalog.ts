@@ -564,7 +564,9 @@ type LiveSearchItem = {
  * Merges Bengaluru, Mumbai, Delhi stock so customers can shop & order real inventory.
  */
 export async function fetchLiveStorefrontCatalog(): Promise<MultiCityProduct[]> {
-  const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:4000';
+  const API_URL =
+    import.meta.env.VITE_API_URL ??
+    (import.meta.env.PROD ? '' : 'http://127.0.0.1:4000');
   const cities: CityName[] = ['Bengaluru', 'Mumbai', 'Delhi'];
   const byId = new Map<string, MultiCityProduct>();
 
@@ -788,7 +790,9 @@ export async function smartSearchProducts(input: {
   let ranked: MultiCityProduct[] = localRanked.map((r) => r.product);
   let mode: 'local' | 'opensearch' | 'postgres' | 'hybrid' = 'local';
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:4000';
+  const API_URL =
+    import.meta.env.VITE_API_URL ??
+    (import.meta.env.PROD ? '' : 'http://127.0.0.1:4000');
   try {
     const params = new URLSearchParams({
       q: suggestion || q,

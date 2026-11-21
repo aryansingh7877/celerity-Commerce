@@ -58,7 +58,9 @@ export function resolveProductImage(
 
   // Relative paths from CDN/storage
   if (raw.startsWith('/')) {
-    const api = import.meta.env.VITE_API_URL || 'http://127.0.0.1:4000';
+    const api =
+      import.meta.env.VITE_API_URL ??
+      (import.meta.env.PROD ? '' : 'http://127.0.0.1:4000');
     return `${api}${raw}`;
   }
 

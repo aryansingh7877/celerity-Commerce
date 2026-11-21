@@ -1,6 +1,7 @@
 import type { DbClient } from '../db/pool.js';
 import { enqueueOutbox } from './outbox.js';
 import { HttpError } from '../middleware/errors.js';
+import { notifySupplierOnStockDepletion } from './supplierNotify.js';
 
 export async function getStoreIdByCity(client: DbClient, city: string): Promise<string> {
   const normalized = city === 'Bangalore' ? 'Bengaluru' : city;
@@ -89,6 +90,17 @@ export async function adjustStock(
         reorder_threshold: reorder,
       },
     });
+    // Immediate supplier WhatsApp (does not wait on Kafka worker)
+    if (previous > 0) {
+      await notifySupplierOnStockDepletion({
+        productId: input.productId,
+        storeId: input.storeId,
+        city: input.city,
+        stock: 0,
+        reorderThreshold: reorder,
+        reason: 'out_of_stock',
+      }).catch((err) => console.error('[inventory] supplier notify failed', err));
+    }
   } else if (input.newStock <= reorder) {
     await enqueueOutbox(client, {
       eventType: 'inventory.low_stock',
@@ -101,6 +113,16 @@ export async function adjustStock(
         reorder_threshold: reorder,
       },
     });
+    if (previous > reorder) {
+      await notifySupplierOnStockDepletion({
+        productId: input.productId,
+        storeId: input.storeId,
+        city: input.city,
+        stock: input.newStock,
+        reorderThreshold: reorder,
+        reason: 'low_stock',
+      }).catch((err) => console.error('[inventory] supplier notify failed', err));
+    }
   }
 
   return { previous, newStock: input.newStock };

@@ -96,9 +96,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setProfile(null);
       return;
     }
+    // Set auth state immediately so the UI can leave the login screen
     setSession(currentSession);
     setUser(currentSession.user);
-    await loadProfile(currentSession.user);
+    // Profile fetch is best-effort (must not block / deadlock auth lock)
+    try {
+      await loadProfile(currentSession.user);
+    } catch {
+      /* keep base session even if /api/auth/me fails */
+    }
   };
 
   useEffect(() => {
@@ -111,7 +117,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, currentSession) => {
-      void applySession(currentSession).finally(() => setIsLoading(false));
+      // Defer: awaiting getSession/API inside this callback deadlocks supabase-js
+      setTimeout(() => {
+        void applySession(currentSession).finally(() => setIsLoading(false));
+      }, 0);
     });
 
     return () => {
@@ -140,13 +149,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signIn = async (email: string, pass: string) => {
-    const res = await signInUser(email, pass);
+    const res = await signInUser(email.trim().toLowerCase(), pass);
     if (res.error || !res.session?.access_token || !res.user) {
       return {
         success: false,
         error: res.error?.message || 'Sign in failed — no session token. Confirm email if required.',
       };
     }
+    setIsLoading(false);
     await applySession(res.session);
     closeAuthModal();
     return { success: true };

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Plus,
   ArrowRight,
@@ -12,6 +12,13 @@ import { Product, MerchantTab } from '../../../types/product';
 import { StatsCards } from '../dashboard/StatsCards';
 import { CategoryDistributionChart } from '../dashboard/CategoryDistributionChart';
 import { InventoryTable } from '../dashboard/InventoryTable';
+
+function timeOfDayGreeting(): string {
+  const hr = new Date().getHours();
+  if (hr < 12) return 'Good morning';
+  if (hr < 17) return 'Good afternoon';
+  return 'Good evening';
+}
 
 interface OverviewPageProps {
   products: Product[];
@@ -32,6 +39,13 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   onAdjustStock,
   merchantName = 'Merchant',
 }) => {
+  const [greeting, setGreeting] = useState(timeOfDayGreeting);
+  useEffect(() => {
+    setGreeting(timeOfDayGreeting());
+    const id = setInterval(() => setGreeting(timeOfDayGreeting()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const lowStockItems = products.filter((p) => p.stock >= 1 && p.stock <= 10);
   const outOfStockItems = products.filter((p) => p.stock === 0);
   const totalStockUnits = products.reduce((acc, p) => acc + p.stock, 0);
@@ -47,7 +61,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             Celerity Commerce • Merchant Central
           </div>
           <h1 className="font-display font-extrabold text-2xl sm:text-3xl text-[#202A24] tracking-tight">
-            Good morning, {merchantName.split(' ')[0]}.
+            {greeting}, {merchantName.split(' ')[0]}.
           </h1>
           <p className="text-xs sm:text-sm text-[#7C877F] mt-1 font-medium">
             {isEmpty

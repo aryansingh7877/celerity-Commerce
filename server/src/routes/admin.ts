@@ -553,7 +553,7 @@ adminRouter.patch(
   asyncHandler(async (req, res) => {
     const body = z
       .object({
-        status: z.enum(['open', 'contacted', 'ordered', 'received', 'closed']),
+        status: z.enum(['open', 'ordered', 'received', 'cancelled']),
       })
       .parse(req.body);
     const pool = getPool();
@@ -626,7 +626,7 @@ adminRouter.post(
         providerResponse: result.response,
       });
       await pool.query(
-        `UPDATE restock_requests SET whatsapp_status = 'submitted', status = 'contacted', updated_at = now() WHERE id = $1`,
+        `UPDATE restock_requests SET whatsapp_status = 'submitted', updated_at = now() WHERE id = $1`,
         [restockId]
       );
       res.json({ status: 'submitted', messageId: result.messageId });

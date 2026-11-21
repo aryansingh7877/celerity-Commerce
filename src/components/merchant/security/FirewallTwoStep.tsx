@@ -15,7 +15,6 @@ import {
   enrollTotpFactor,
   getEmailTwoStepEnabled,
   listVerifiedTotpFactors,
-  sendEmailTwoStepCode,
   setEmailTwoStepEnabled,
   unenrollTotpFactor,
   verifyTotpCode,
@@ -64,7 +63,7 @@ export const FirewallTwoStep: React.FC = () => {
   }, [refresh]);
 
   const enableEmail = async () => {
-    if (!user?.id || !user.email) {
+    if (!user?.id) {
       setError('Sign in again to enable email verification.');
       return;
     }
@@ -72,21 +71,16 @@ export const FirewallTwoStep: React.FC = () => {
     setError(null);
     setOkMsg(null);
     try {
-      const { error: sendErr } = await sendEmailTwoStepCode(user.email);
-      if (sendErr) {
-        setError(
-          sendErr.message ||
-            'Could not send a test code. Check the API is running and Supabase Auth email is enabled.'
-        );
-        return;
-      }
+      // Enable only — retailers enter email and receive a code at login (no API keys for them).
       const { error: updErr } = await setEmailTwoStepEnabled(user.id, true);
       if (updErr) {
         setError(updErr.message);
         return;
       }
       setEmailOn(true);
-      setOkMsg(`Email verification enabled. A 6-digit test code was sent to ${user.email}.`);
+      setOkMsg(
+        'Email verification enabled. At sign-in, enter your email to receive a 6-digit code.'
+      );
     } finally {
       setBusy(false);
     }

@@ -22,9 +22,18 @@ authRouter.post(
   '/email-2fa/send',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const email = req.user!.email;
-    if (!email) throw new HttpError(400, 'Account has no email');
-    const result = await issueEmailTwoStepCode(req.user!.id, email);
+    const body = z
+      .object({
+        email: z.string().email(),
+      })
+      .parse(req.body);
+    const entered = body.email.trim().toLowerCase();
+    const account = (req.user!.email || '').trim().toLowerCase();
+    if (!account) throw new HttpError(400, 'Account has no email on file');
+    if (entered !== account) {
+      throw new HttpError(400, 'Enter the email registered on this account.');
+    }
+    const result = await issueEmailTwoStepCode(req.user!.id, entered);
     res.json({ ok: true, delivery: result.delivery, channel: result.channel });
   })
 );
@@ -33,8 +42,14 @@ authRouter.post(
   '/email-2fa/verify',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const body = z.object({ code: z.string().min(4).max(12) }).parse(req.body);
-    const result = await verifyStoredEmailCode(req.user!.id, body.code, req.user!.email);
+    const body = z
+      .object({
+        code: z.string().min(4).max(12),
+        email: z.string().email().optional(),
+      })
+      .parse(req.body);
+    const email = (body.email || req.user!.email || '').trim().toLowerCase() || null;
+    const result = await verifyStoredEmailCode(req.user!.id, body.code, email);
     if (!result.ok) throw new HttpError(400, result.error);
     res.json({ ok: true });
   })

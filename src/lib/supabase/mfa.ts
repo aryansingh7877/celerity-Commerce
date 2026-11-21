@@ -77,25 +77,28 @@ function asAuthError(err: unknown): { message: string } {
   return { message: 'Request failed' };
 }
 
-/** Sends a 6-digit code via API (Resend or server console) — not a magic link. */
-export async function sendEmailTwoStepCode(_email?: string) {
+/** Sends a 6-digit code to the email the retailer entered. */
+export async function sendEmailTwoStepCode(email: string) {
   try {
     const res = await api<{
       ok: boolean;
       delivery?: 'email' | 'resend' | 'console';
       channel?: string;
-    }>('/api/auth/email-2fa/send', { method: 'POST', body: JSON.stringify({}) });
+    }>('/api/auth/email-2fa/send', {
+      method: 'POST',
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    });
     return { error: null as null, delivery: res.delivery ?? 'email', channel: res.channel };
   } catch (err) {
     return { error: asAuthError(err), delivery: undefined as undefined };
   }
 }
 
-export async function verifyEmailTwoStepCode(_email: string, code: string) {
+export async function verifyEmailTwoStepCode(email: string, code: string) {
   try {
     await api<{ ok: boolean }>('/api/auth/email-2fa/verify', {
       method: 'POST',
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, email: email.trim().toLowerCase() }),
     });
     return { error: null as null };
   } catch (err) {

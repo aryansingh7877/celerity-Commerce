@@ -1,47 +1,77 @@
 # celerity-Commerce
 
-> **Celerity Commerce** — Multi-city electronics retail with Smart Basket Rescue, Aiven PostgreSQL / Kafka / OpenSearch, and Supabase Auth.
+> **Celerity Commerce** — Smart Basket Rescue Platform & Merchant Inventory Management. Never lose a sale to an empty shelf.
 
-## Stack
+---
 
-- **Frontend:** React 19 + TypeScript + Vite + Tailwind
-- **Auth:** Supabase Auth (JWT verified by Express)
-- **API:** Node.js Express + TypeScript (`server/src`)
-- **Data:** Aiven PostgreSQL (source of truth)
-- **Events:** Transactional outbox → KafkaJS → Aiven Kafka → workers
-- **Search:** Aiven OpenSearch (Postgres fuzzy fallback)
-- **Notifications:** WhatsApp Business Cloud API (real provider responses only)
-- **AI (optional):** Qwen via Ollama for admin dead-stock explanations only
+## 🌟 Overview
 
-## Setup
+Celerity Commerce transforms the e-commerce fulfillment experience with:
+- **Smart Basket Rescue**: Real-time out-of-stock detection with 1-tap equivalent item swaps.
+- **Merchant Inventory Dashboard**: Production-grade admin management system for real-time inventory telemetry, multi-hub stock management (Bangalore, Mumbai, Delhi), catalog categorization, and replenishment alerts.
+- **Premium Split-Screen Authentication**: Originkit Canvas Stipple Flow animation, Zenvo-inspired frosted glassmorphism, and instant session management.
 
+---
+
+## 🛠️ Tech Stack
+
+- **Framework**: React 19 + TypeScript + Vite
+- **Styling**: Tailwind CSS + Custom Aurora & Glassmorphism Design Tokens
+- **Animations**: Framer Motion + GSAP
+- **Icons**: Lucide React
+- **Backend / Auth**: Supabase (Postgres, Auth, RLS, Edge Functions, transactional outbox)
+
+---
+
+## 🚀 Getting Started
+
+### 1. Clone the repository
+```bash
+git clone https://github.com/aryansingh7877/celerity-Commerce.git
+cd celerity-Commerce
+```
+
+### 2. Install dependencies
+```bash
+npm install
+```
+
+### 3. Run Development Server
+```bash
+npm run dev
+```
+
+### 4. Backend pipeline (Supabase)
 ```bash
 cp .env.example .env
-# Fill Supabase Auth + Aiven PostgreSQL/Kafka/OpenSearch (+ WhatsApp/Ollama as needed)
-npm install
-npm run db:migrate
+# Apply SQL migrations in supabase/migrations/ (Dashboard SQL Editor or `npm run db:push`)
+npm run functions:serve    # Edge Functions locally
+npm run worker:outbox      # drains outbox (optional)
+npm run pipeline:smoke     # RPC smoke check
 ```
 
-## Run (separate processes)
+Details: [`supabase/README.md`](supabase/README.md)
 
+### 5. Build for Production
 ```bash
-npm run api                 # Express API :4000
-npm run worker:outbox       # outbox → Kafka
-npm run worker:search       # Kafka → OpenSearch
-npm run worker:inventory    # Kafka → restock + WhatsApp
-npm run dev                 # Vite storefront/admin
+npm run build
 ```
 
-Smoke:
+---
 
-```bash
-npx tsx server/scripts/api-smoke.ts
-```
+## 📊 Features
 
-Admin bootstrap: set `ADMIN_BOOTSTRAP_EMAILS=you@example.com` so the first `/api/auth/me` call elevates that Supabase user to `admin` in Aiven `profiles`.
+- **Merchant Admin Portal**:
+  - Live Overview with 4 KPI cards (Total Products, Total Stock, Low Stock, Out of Stock)
+  - Category Volume & Valuation Analytics
+  - Full SKU inventory management with instant `+` and `-` stock adjustments
+  - Add, Edit, and Delete product workflows with modal dialogs
+  - Shopcart-inspired visual product grid
+  - Multi-city Hub logistics telemetry (Bangalore, Mumbai, Delhi)
+  - Seamless 1-click dual-mode switcher between Merchant Admin and Customer Storefront
 
-## Notes
+---
 
-- Checkout uses conditional SQL stock updates; OpenSearch is never used for stock authority.
-- Missing WhatsApp credentials yield `pending_configuration` — never a fake “sent”.
-- Do not commit `.env`. See `.env.example` for all variables.
+## 📄 License
+
+MIT © 2026 Celerity Commerce Inc.

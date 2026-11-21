@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { asyncHandler, HttpError } from '../middleware/errors.js';
 import { getPool } from '../db/pool.js';
+import {
+  issueEmailTwoStepCode,
+  verifyEmailTwoStepCode as verifyStoredEmailCode,
+} from '../services/emailTwoStep.js';
 
 export const authRouter = Router();
 
@@ -11,6 +15,28 @@ authRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     res.json({ user: req.user });
+  })
+);
+
+authRouter.post(
+  '/email-2fa/send',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const email = req.user!.email;
+    if (!email) throw new HttpError(400, 'Account has no email');
+    const result = await issueEmailTwoStepCode(req.user!.id, email);
+    res.json({ ok: true, delivery: result.delivery, channel: result.channel });
+  })
+);
+
+authRouter.post(
+  '/email-2fa/verify',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const body = z.object({ code: z.string().min(4).max(12) }).parse(req.body);
+    const result = await verifyStoredEmailCode(req.user!.id, body.code, req.user!.email);
+    if (!result.ok) throw new HttpError(400, result.error);
+    res.json({ ok: true });
   })
 );
 
